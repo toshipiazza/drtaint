@@ -60,14 +60,36 @@ instrument_mem(void *drcontext, instrlist_t *ilist, instr_t *where, opnd_t ref)
         DR_ASSERT(false);
 }
 
+static void
+instrument_reg(void *drcontext, instrlist_t *ilist, instr_t *where, reg_id_t reg)
+{
+    reg_id_t regaddr;
+    reg_id_t scratch;
+    bool ok;
+
+    if (reg == DR_REG_PC)
+        return;
+    if (reg - DR_REG_R0 >= DR_NUM_GPR_REGS)
+        return;
+
+    if (drreg_reserve_register(drcontext, ilist, where, NULL, &regaddr)
+        != DRREG_SUCCESS) {
+        DR_ASSERT(false); /* can't recover */
+        return;
+    }
+
+    ok = shadow_insert_reg_to_shadow(drcontext, ilist, where, reg, regaddr);
+    DR_ASSERT(ok);
+
+    if (drreg_unreserve_register(drcontext, ilist, where, regaddr) != DRREG_SUCCESS)
+        DR_ASSERT(false);
+}
+
 static dr_emit_flags_t
 event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *where,
                       bool for_trace, bool translating, void *user_data)
 {
     int i;
-
-    if (!instr_reads_memory(where) && !instr_writes_memory(where))
-        return DR_EMIT_DEFAULT;
 
     for (i = 0; i < instr_num_srcs(where); i++) {
         if (opnd_is_memory_reference(instr_get_src(where, i)))
@@ -77,6 +99,18 @@ event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *w
         if (opnd_is_memory_reference(instr_get_dst(where, i)))
             instrument_mem(drcontext, ilist, where, instr_get_dst(where, i));
     }
+    for (i = 0; i < instr_num_srcs(where); i++) {
+        if (opnd_is_reg(instr_get_src(where, i))) {
+            reg_id_t reg = opnd_get_reg(instr_get_src(where, i));
+            instrument_reg(drcontext, ilist, where, reg);
+        }
+    }
+    for (i = 0; i < instr_num_dsts(where); i++) {
+        if (opnd_is_reg(instr_get_dst(where, i))) {
+            reg_id_t reg = opnd_get_reg(instr_get_dst(where, i));
+            instrument_reg(drcontext, ilist, where, reg);
+        }
+    }
 
     return DR_EMIT_DEFAULT;
 }
@@ -84,7 +118,6 @@ event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *w
 static void
 exit_event(void)
 {
-    shadow_exit();
     drmgr_exit();
     drreg_exit();
 }
