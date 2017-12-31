@@ -55,12 +55,16 @@ shadow_init(int id)
     /* XXX: we only support a single umbra mapping */
     if (dr_atomic_add32_return_sum(&num_shadow_count, 1) > 1)
         return false;
-
-    if (!shadow_mem_init(id))
-        return false;
-    if (!shadow_reg_init())
+    if (!shadow_mem_init(id) || !shadow_reg_init())
         return false;
     return true;
+}
+
+void
+shadow_exit(void)
+{
+    shadow_mem_exit();
+    shadow_reg_exit();
 }
 
 bool
@@ -101,7 +105,6 @@ shadow_mem_init(int id)
     if (umbra_create_mapping(&umbra_map_ops, &umbra_map) != DRMF_SUCCESS)
         return false;
     drmgr_register_signal_event(event_signal_instrumentation);
-    dr_register_exit_event(shadow_mem_exit);
     return true;
 }
 
@@ -193,7 +196,6 @@ shadow_reg_init(void)
     drmgr_init();
     drmgr_register_thread_init_event(event_thread_init);
     drmgr_register_thread_init_event(event_thread_exit);
-    dr_register_exit_event(shadow_reg_exit);
 
     /* initialize tls for per-thread data */
     tls_index = drmgr_register_tls_field();
