@@ -112,16 +112,20 @@ propagate_mov_reg_src(void *drcontext, void *tag, instrlist_t *ilist, instr_t *w
 static void
 propagate_mov_imm_src(void *drcontext, void *tag, instrlist_t *ilist, instr_t *where)
 {
-    /* mov reg2, reg1 */
-    auto sreg2 = drreg_reservation { ilist, where };
-    auto sreg1 = drreg_reservation { ilist, where };
+    /* mov reg2, imm1 */
+    auto sreg2 = drreg_reservation { ilist , where };
+    auto simm2 = drreg_reservation { ilist , where };
     reg_id_t reg2 = opnd_get_reg(instr_get_dst(where, 0));
 
     drtaint_insert_reg_to_taint(drcontext, ilist, where, reg2, sreg2);
+    instrlist_meta_preinsert(ilist, where, XINST_CREATE_move
+                             (drcontext,
+                              opnd_create_reg(simm2),
+                              opnd_create_immed_int(0, OPSZ_1)));
     instrlist_meta_preinsert(ilist, where, XINST_CREATE_store_1byte
                              (drcontext,
                               OPND_CREATE_MEM8(sreg2, 0),
-                              opnd_create_immed_int(0, OPSZ_1)));
+                              opnd_create_reg(simm2)));
 }
 
 static dr_emit_flags_t
