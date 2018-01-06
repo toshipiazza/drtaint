@@ -46,7 +46,6 @@ typedef struct _per_thread_t {
      * aligned location is represented as one byte. We imitate this here.
      */
     byte shadow_gprs[DR_NUM_GPR_REGS];
-    byte shadow_aflags; /* special case */
 } per_thread_t;
 
 bool
@@ -195,7 +194,7 @@ shadow_reg_init(void)
 {
     drmgr_init();
     drmgr_register_thread_init_event(event_thread_init);
-    drmgr_register_thread_init_event(event_thread_exit);
+    drmgr_register_thread_exit_event(event_thread_exit);
 
     /* initialize tls for per-thread data */
     tls_index = drmgr_register_tls_field();
@@ -209,7 +208,6 @@ shadow_insert_reg_to_shadow(void *drcontext, instrlist_t *ilist, instr_t *where,
                             reg_id_t shadow,  reg_id_t regaddr)
 {
     unsigned int offs = offsetof(per_thread_t, shadow_gprs[shadow - DR_REG_R0]);
-    DR_ASSERT(shadow != DR_REG_PC);
     DR_ASSERT(shadow - DR_REG_R0 < DR_NUM_GPR_REGS);
     /* Load the per_thread data structure holding the thread-local taint
      * values of each register.
@@ -227,7 +225,7 @@ shadow_reg_exit(void)
 {
     drmgr_unregister_tls_field(tls_index);
     drmgr_unregister_thread_init_event(event_thread_init);
-    drmgr_unregister_thread_init_event(event_thread_exit);
+    drmgr_unregister_thread_exit_event(event_thread_exit);
     drmgr_exit();
 }
 
