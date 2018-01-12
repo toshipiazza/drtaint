@@ -1,3 +1,6 @@
+#include <iostream>
+#include <unordered_set>
+
 #include "drtaint_helper.h"
 
 drreg_reservation::
@@ -18,14 +21,19 @@ drreg_reservation::
         DR_ASSERT(false);
 }
 
+std::unordered_set<int> seen;
+
 void
 unimplemented_opcode(instr_t *where)
 {
-    char buf[20];
     int opcode = instr_get_opcode(where);
-    dr_snprintf(buf, sizeof(buf), "Opcode '%s' NYI",
-                decode_opcode_name(opcode));
-    DR_ASSERT_MSG(false, buf);
+    if (seen.find(opcode) == std::end(seen)) {
+        seen.insert(opcode);
+        std::cout << "Opcode '"
+                  << decode_opcode_name(opcode)
+                  << "' NYI"
+                  << std::endl;
+    }
 }
 
 void

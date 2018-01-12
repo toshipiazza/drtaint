@@ -5,6 +5,7 @@
 #include "dr_api.h"
 #include "drmgr.h"
 #include "umbra.h"
+#include "drtaint.h"
 
 static int num_shadow_count;
 static umbra_map_t *umbra_map;
@@ -193,6 +194,9 @@ static bool
 shadow_reg_init(void)
 {
     drmgr_init();
+    /* TODO: Add init/exit event priorities. We want to initialize the shaow
+     * registers early, and delete them late.
+     */
     drmgr_register_thread_init_event(event_thread_init);
     drmgr_register_thread_exit_event(event_thread_exit);
 

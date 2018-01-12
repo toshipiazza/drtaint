@@ -8,7 +8,7 @@ extern "C" {
 #endif
 
 enum {
-    DRMGR_PRIORITY_INSERT_DRTAINT = -7500,
+    DRMGR_PRIORITY_INSERT_DRTAINT       = -7500,
 };
 
 #define DRMGR_PRIORITY_NAME_DRTAINT "drtaint"

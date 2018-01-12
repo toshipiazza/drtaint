@@ -5,7 +5,7 @@ set(DynamoRIO_DIR         /home/piazzt/SD/Build/dynamorio/exports/cmake)
 set(DrMemoryFramework_DIR /home/piazzt/install/exports32/drmf)
 
 set(CMAKE_CXX_STANDARD 11)
-add_library(drtaint SHARED app.c shadow.c drtaint.cpp drtaint_helper.cpp)
+add_library(drtaint SHARED sample_app.c shadow.c drtaint.cpp drtaint_helper.cpp)
 find_package(DynamoRIO REQUIRED)
 find_package(DrMemoryFramework REQUIRED)
 configure_DynamoRIO_client(drtaint)
