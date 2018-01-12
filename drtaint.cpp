@@ -62,6 +62,12 @@ drtaint_insert_reg_to_taint(void *drcontext, instrlist_t *ilist, instr_t *where,
                                                shadow, regaddr);
 }
 
+bool
+drtaint_write_shadow_values(FILE *fp)
+{
+    return drtaint_shadow_write_shadow_values(fp);
+}
+
 /* ======================================================================================
  * main implementation, taint propagation step
  * ==================================================================================== */

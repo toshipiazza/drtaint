@@ -27,6 +27,9 @@ bool
 drtaint_insert_reg_to_taint(void *drcontext, instrlist_t *ilist, instr_t *where,
                             reg_id_t shadow, reg_id_t regaddr);
 
+bool
+drtaint_write_shadow_values(FILE *fp);
+
 #ifdef __cplusplus
 }
 #endif

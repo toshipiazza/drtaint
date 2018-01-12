@@ -247,3 +247,26 @@ event_thread_exit(void *drcontext)
     per_thread_t *data = drmgr_get_tls_field(drcontext, tls_index);
     dr_thread_free(drcontext, data, sizeof(per_thread_t));
 }
+
+static bool
+shadow_memory_iter_func(umbra_map_t *map, umbra_shadow_memory_info_t *info,
+                        void *user_data)
+{
+    if (info->shadow_type == UMBRA_SHADOW_MEMORY_TYPE_NORMAL) {
+        FILE *fp = (FILE *)user_data;
+        fprintf(fp, "APP %08x SHADOW %08x:",
+                info->app_base,
+                info->shadow_base);
+        fwrite(info->shadow_base, 1, info->shadow_size, fp);
+        fprintf(fp, "\n");
+    }
+    return true;
+}
+
+bool
+drtaint_shadow_write_shadow_values(FILE *fp)
+{
+    fprintf(fp, "TAINT DUMP\n");
+    return umbra_iterate_shadow_memory(
+            umbra_map, fp, shadow_memory_iter_func) == DRMF_SUCCESS;
+}

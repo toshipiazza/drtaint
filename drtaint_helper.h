@@ -26,12 +26,6 @@ unimplemented_opcode(instr_t *where);
 void
 instrlist_meta_preinsert_xl8(instrlist_t *ilist, instr_t *where, instr_t *insert);
 
-void
-print_instr(instr_t *instr);
-
-void
-insert_debug(instrlist_t *ilist, instr_t *where);
-
 #ifdef __cplusplus
 }
 #endif

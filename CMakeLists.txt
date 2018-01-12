@@ -9,7 +9,8 @@ add_library(drtaint SHARED
   sample_app.c
   drtaint.cpp
   drtaint_shadow.c
-  drtaint_helper.cpp)
+  drtaint_helper.cpp
+  utils.c)
 find_package(DynamoRIO REQUIRED)
 find_package(DrMemoryFramework REQUIRED)
 configure_DynamoRIO_client(drtaint)
@@ -17,3 +18,4 @@ use_DynamoRIO_extension(drtaint "drreg")
 use_DynamoRIO_extension(drtaint "drmgr")
 use_DynamoRIO_extension(drtaint "umbra")
 use_DynamoRIO_extension(drtaint "drutil")
+use_DynamoRIO_extension(drtaint "drx")
