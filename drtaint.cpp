@@ -3,8 +3,8 @@
 #include "umbra.h"
 #include "drreg.h"
 #include "drutil.h"
-#include "shadow.h"
 #include "drtaint.h"
+#include "drtaint_shadow.h"
 #include "drtaint_helper.h"
 
 static dr_emit_flags_t
@@ -25,7 +25,7 @@ drtaint_init(client_id_t id)
         return true;
 
     drmgr_init();
-    if (!shadow_init(id) ||
+    if (!drtaint_shadow_init(id) ||
         drreg_init(&ops) != DRREG_SUCCESS)
         return false;
     if (!drmgr_register_bb_instrumentation_event(NULL,
@@ -41,7 +41,7 @@ drtaint_exit(void)
     if (count != 0)
         return;
 
-    shadow_exit();
+    drtaint_shadow_exit();
     drmgr_exit();
     drreg_exit();
 }
@@ -50,16 +50,16 @@ bool
 drtaint_insert_app_to_taint(void *drcontext, instrlist_t *ilist, instr_t *where,
                             reg_id_t reg_addr, reg_id_t scratch)
 {
-    return shadow_insert_app_to_shadow(drcontext, ilist, where,
-                                       reg_addr, scratch);
+    return drtaint_shadow_insert_app_to_shadow(drcontext, ilist, where,
+                                               reg_addr, scratch);
 }
 
 bool
 drtaint_insert_reg_to_taint(void *drcontext, instrlist_t *ilist, instr_t *where,
                             reg_id_t shadow, reg_id_t regaddr)
 {
-    return shadow_insert_reg_to_shadow(drcontext, ilist, where,
-                                       shadow, regaddr);
+    return drtaint_shadow_insert_reg_to_shadow(drcontext, ilist, where,
+                                               shadow, regaddr);
 }
 
 /* ======================================================================================

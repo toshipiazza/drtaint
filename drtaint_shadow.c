@@ -23,17 +23,17 @@ static dr_signal_action_t
 event_signal_instrumentation(void *drcontext, dr_siginfo_t *info);
 
 static bool
-shadow_mem_init(int id);
+drtaint_shadow_mem_init(int id);
 
 static void
-shadow_mem_exit(void);
+drtaint_shadow_mem_exit(void);
 
 /* shadow regs */
 static bool
-shadow_reg_init(void);
+drtaint_shadow_reg_init(void);
 
 static void
-shadow_reg_exit(void);
+drtaint_shadow_reg_exit(void);
 
 static void
 event_thread_init(void *drcontext);
@@ -50,26 +50,26 @@ typedef struct _per_thread_t {
 } per_thread_t;
 
 bool
-shadow_init(int id)
+drtaint_shadow_init(int id)
 {
     /* XXX: we only support a single umbra mapping */
     if (dr_atomic_add32_return_sum(&num_shadow_count, 1) > 1)
         return false;
-    if (!shadow_mem_init(id) || !shadow_reg_init())
+    if (!drtaint_shadow_mem_init(id) || !drtaint_shadow_reg_init())
         return false;
     return true;
 }
 
 void
-shadow_exit(void)
+drtaint_shadow_exit(void)
 {
-    shadow_mem_exit();
-    shadow_reg_exit();
+    drtaint_shadow_mem_exit();
+    drtaint_shadow_reg_exit();
 }
 
 bool
-shadow_insert_app_to_shadow(void *drcontext, instrlist_t *ilist, instr_t *where,
-                            reg_id_t regaddr, reg_id_t scratch)
+drtaint_shadow_insert_app_to_shadow(void *drcontext, instrlist_t *ilist, instr_t *where,
+                                    reg_id_t regaddr, reg_id_t scratch)
 {
     /* XXX: we shouldn't have to do this */
     /* Save the app address to a well-known spill slot, so that the fault handler
@@ -86,7 +86,7 @@ shadow_insert_app_to_shadow(void *drcontext, instrlist_t *ilist, instr_t *where,
  * shadow memory implementation
  * ==================================================================================== */
 static bool
-shadow_mem_init(int id)
+drtaint_shadow_mem_init(int id)
 {
     umbra_map_options_t umbra_map_ops;
 
@@ -109,7 +109,7 @@ shadow_mem_init(int id)
 }
 
 static void
-shadow_mem_exit(void)
+drtaint_shadow_mem_exit(void)
 {
     if (umbra_destroy_mapping(umbra_map) != DRMF_SUCCESS)
         DR_ASSERT(false);
@@ -191,7 +191,7 @@ event_signal_instrumentation(void *drcontext, dr_siginfo_t *info)
  * shadow registers implementation
  * ==================================================================================== */
 static bool
-shadow_reg_init(void)
+drtaint_shadow_reg_init(void)
 {
     drmgr_init();
     /* TODO: Add init/exit event priorities. We want to initialize the shaow
@@ -208,8 +208,8 @@ shadow_reg_init(void)
 }
 
 bool
-shadow_insert_reg_to_shadow(void *drcontext, instrlist_t *ilist, instr_t *where,
-                            reg_id_t shadow,  reg_id_t regaddr)
+drtaint_shadow_insert_reg_to_shadow(void *drcontext, instrlist_t *ilist, instr_t *where,
+                                    reg_id_t shadow,  reg_id_t regaddr)
 {
     unsigned int offs = offsetof(per_thread_t, shadow_gprs[shadow - DR_REG_R0]);
     DR_ASSERT(shadow - DR_REG_R0 < DR_NUM_GPR_REGS);
@@ -225,7 +225,7 @@ shadow_insert_reg_to_shadow(void *drcontext, instrlist_t *ilist, instr_t *where,
 }
 
 static void
-shadow_reg_exit(void)
+drtaint_shadow_reg_exit(void)
 {
     drmgr_unregister_tls_field(tls_index);
     drmgr_unregister_thread_init_event(event_thread_init);
