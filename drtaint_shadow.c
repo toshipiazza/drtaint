@@ -298,7 +298,7 @@ shadow_memory_iter_func(umbra_map_t *map, umbra_shadow_memory_info_t *info,
 {
     if (info->shadow_type == UMBRA_SHADOW_MEMORY_TYPE_NORMAL) {
         FILE *fp = (FILE *)user_data;
-        fprintf(fp, "APP %08x SHADOW %08x:",
+        fprintf(fp, "APP %08x SHADOW %08x ",
                 info->app_base,
                 info->shadow_base);
         fwrite(info->shadow_base, 1, info->shadow_size, fp);
