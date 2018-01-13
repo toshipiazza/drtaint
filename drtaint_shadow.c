@@ -193,12 +193,16 @@ event_signal_instrumentation(void *drcontext, dr_siginfo_t *info)
 static bool
 drtaint_shadow_reg_init(void)
 {
+    drmgr_priority_t exit_priority = {
+        sizeof(exit_priority), DRMGR_PRIORITY_NAME_DRTAINT_EXIT, NULL, NULL,
+        DRMGR_PRIORITY_THREAD_EXIT_DRTAINT};
+    drmgr_priority_t init_priority = {
+        sizeof(init_priority), DRMGR_PRIORITY_NAME_DRTAINT_INIT, NULL, NULL,
+        DRMGR_PRIORITY_THREAD_INIT_DRTAINT};
+
     drmgr_init();
-    /* TODO: Add init/exit event priorities. We want to initialize the shaow
-     * registers early, and delete them late.
-     */
-    drmgr_register_thread_init_event(event_thread_init);
-    drmgr_register_thread_exit_event(event_thread_exit);
+    drmgr_register_thread_init_event_ex(event_thread_init, &init_priority);
+    drmgr_register_thread_exit_event_ex(event_thread_exit, &exit_priority);
 
     /* initialize tls for per-thread data */
     tls_index = drmgr_register_tls_field();

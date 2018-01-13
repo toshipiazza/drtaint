@@ -8,10 +8,14 @@ extern "C" {
 #endif
 
 enum {
-    DRMGR_PRIORITY_INSERT_DRTAINT       = -7500,
+    DRMGR_PRIORITY_INSERT_DRTAINT      = -7500,
+    DRMGR_PRIORITY_THREAD_INIT_DRTAINT = -7500,
+    DRMGR_PRIORITY_THREAD_EXIT_DRTAINT =  7500,
 };
 
 #define DRMGR_PRIORITY_NAME_DRTAINT "drtaint"
+#define DRMGR_PRIORITY_NAME_DRTAINT_EXIT "drtaint.exit"
+#define DRMGR_PRIORITY_NAME_DRTAINT_INIT "drtaint.init"
 
 bool
 drtaint_init(client_id_t id);
