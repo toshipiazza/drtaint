@@ -34,6 +34,18 @@ drtaint_insert_reg_to_taint(void *drcontext, instrlist_t *ilist, instr_t *where,
 bool
 drtaint_write_shadow_values(FILE *fp);
 
+bool
+drtaint_get_reg_taint(void *drcontext, reg_id_t reg, byte *result);
+
+bool
+drtaint_set_reg_taint(void *drcontext, reg_id_t reg, byte value);
+
+bool
+drtaint_get_app_taint(void *drcontext, app_pc app, byte *result);
+
+bool
+drtaint_set_app_taint(void *drcontext, app_pc app, byte result);
+
 #ifdef __cplusplus
 }
 #endif

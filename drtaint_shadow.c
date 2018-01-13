@@ -82,6 +82,26 @@ drtaint_shadow_insert_app_to_shadow(void *drcontext, instrlist_t *ilist, instr_t
     return true;
 }
 
+bool
+drtaint_shadow_get_app_taint(void *drcontext, app_pc app, byte *result)
+{
+    size_t sz;
+    bool ret = umbra_read_shadow_memory(umbra_map, app, 4,
+                                        &sz, result) == DRMF_SUCCESS;
+    DR_ASSERT(sz == 1);
+    return ret;
+}
+
+bool
+drtaint_shadow_set_app_taint(void *drcontext, app_pc app, byte result)
+{
+    size_t sz;
+    bool ret = umbra_write_shadow_memory(umbra_map, app, 4,
+                                         &sz, &result) == DRMF_SUCCESS;
+    DR_ASSERT(sz == 1);
+    return ret;
+}
+
 /* ======================================================================================
  * shadow memory implementation
  * ==================================================================================== */
@@ -225,6 +245,26 @@ drtaint_shadow_insert_reg_to_shadow(void *drcontext, instrlist_t *ilist, instr_t
                              (drcontext,
                               opnd_create_reg(regaddr),
                               OPND_CREATE_INT8(offs)));
+    return true;
+}
+
+bool
+drtaint_shadow_get_reg_taint(void *drcontext, reg_id_t reg, byte *result)
+{
+    per_thread_t *data = drmgr_get_tls_field(drcontext, tls_index);
+    if (reg - DR_REG_R0 >= DR_NUM_GPR_REGS)
+        return false;
+    *result = data->shadow_gprs[reg - DR_REG_R0];
+    return true;
+}
+
+bool
+drtaint_shadow_set_reg_taint(void *drcontext, reg_id_t reg, byte value)
+{
+    per_thread_t *data = drmgr_get_tls_field(drcontext, tls_index);
+    if (reg - DR_REG_R0 >= DR_NUM_GPR_REGS)
+        return false;
+    data->shadow_gprs[reg - DR_REG_R0] = value;
     return true;
 }
 

@@ -63,6 +63,30 @@ drtaint_insert_reg_to_taint(void *drcontext, instrlist_t *ilist, instr_t *where,
 }
 
 bool
+drtaint_get_reg_taint(void *drcontext, reg_id_t reg, byte *result)
+{
+    return drtaint_shadow_get_reg_taint(drcontext, reg, result);
+}
+
+bool
+drtaint_set_reg_taint(void *drcontext, reg_id_t reg, byte value)
+{
+    return drtaint_shadow_set_reg_taint(drcontext, reg, value);
+}
+
+bool
+drtaint_get_app_taint(void *drcontext, app_pc app, byte *result)
+{
+    return drtaint_shadow_get_app_taint(drcontext, app, result);
+}
+
+bool
+drtaint_set_app_taint(void *drcontext, app_pc app, byte result)
+{
+    return drtaint_shadow_set_app_taint(drcontext, app, result);
+}
+
+bool
 drtaint_write_shadow_values(FILE *fp)
 {
     return drtaint_shadow_write_shadow_values(fp);
@@ -230,13 +254,6 @@ propagate_arith_reg_reg(void *drcontext, void *tag, instrlist_t *ilist, instr_t 
                               opnd_create_reg(sreg1)));
 }
 
-static void
-propagate_arith_imm_imm(void *drcontext, void *tag, instrlist_t *ilist, instr_t *where)
-{
-    /* same behavior, we're just setting the dest register's taint to 0 */
-    propagate_mov_imm_src(drcontext, tag, ilist, where);
-}
-
 static dr_emit_flags_t
 event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *where,
                       bool for_trace, bool translating, void *user_data)
@@ -309,7 +326,7 @@ event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *w
         } else if (opnd_is_reg(instr_get_src(where, 1)))
             propagate_arith_imm_reg(drcontext, tag, ilist, where);
         else
-            propagate_arith_imm_imm(drcontext, tag, ilist, where);
+            DR_ASSERT(false); /* add reg, imm, imm does not make sense */
         break;
     case OP_b:
     case OP_b_short:
