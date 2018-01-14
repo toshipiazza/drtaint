@@ -318,6 +318,8 @@ event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *w
         /* Some of these also write to eflags. If we taint eflags
          * we should do it here.
          */
+        DR_ASSERT(instr_num_srcs(where) == 2 || instr_num_srcs(where) == 4);
+        DR_ASSERT(instr_num_dsts(where) == 1);
         if (opnd_is_reg(instr_get_src(where, 0))) {
             if (opnd_is_reg(instr_get_src(where, 1)))
                 propagate_arith_reg_reg(drcontext, tag, ilist, where);
