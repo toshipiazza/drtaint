@@ -16,6 +16,7 @@ enum {
 #define DRMGR_PRIORITY_NAME_DRTAINT "drtaint"
 #define DRMGR_PRIORITY_NAME_DRTAINT_EXIT "drtaint.exit"
 #define DRMGR_PRIORITY_NAME_DRTAINT_INIT "drtaint.init"
+#define NUDGE_ARG_DRTAINT_DUMP_TAINT 101
 
 bool
 drtaint_init(client_id_t id);
@@ -45,6 +46,9 @@ drtaint_get_app_taint(void *drcontext, app_pc app, byte *result);
 
 bool
 drtaint_set_app_taint(void *drcontext, app_pc app, byte result);
+
+void
+drtaint_dump_taint_to_log(void *drcontext);
 
 #ifdef __cplusplus
 }

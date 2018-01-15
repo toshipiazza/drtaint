@@ -6,12 +6,18 @@
 #include "drtaint.h"
 #include "drtaint_shadow.h"
 #include "drtaint_helper.h"
+#include "utils.h"
 
 static dr_emit_flags_t
 event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *where,
                       bool for_trace, bool translating, void *user_data);
 
+static void
+nudge_event(void *drcontext, uint64 argument);
+
 static int drtaint_init_count;
+
+static client_id_t client_id;
 
 bool
 drtaint_init(client_id_t id)
@@ -24,6 +30,7 @@ drtaint_init(client_id_t id)
     if (count > 1)
         return true;
 
+    client_id = id;
     drmgr_init();
     if (!drtaint_shadow_init(id) ||
         drreg_init(&ops) != DRREG_SUCCESS)
@@ -31,6 +38,7 @@ drtaint_init(client_id_t id)
     if (!drmgr_register_bb_instrumentation_event(NULL,
                 event_app_instruction, &pri))
         return false;
+    dr_register_nudge_event(nudge_event, id);
     return true;
 }
 
@@ -90,6 +98,23 @@ bool
 drtaint_write_shadow_values(FILE *fp)
 {
     return drtaint_shadow_write_shadow_values(fp);
+}
+
+static void
+drtaint_dump_taint_to_log(void *drcontext)
+{
+    file_t nudge_file = log_file_open(client_id, drcontext, NULL,
+                                      "drtaint_dump",
+                                      DR_FILE_ALLOW_LARGE);
+    FILE  *nudge_file_fp = log_stream_from_file(nudge_file);
+    drtaint_write_shadow_values(nudge_file_fp);
+    log_stream_close(nudge_file_fp);
+}
+
+static void
+nudge_event(void *drcontext, uint64 arg)
+{
+    drtaint_dump_taint_to_log(drcontext);
 }
 
 /* ======================================================================================
