@@ -100,7 +100,7 @@ drtaint_write_shadow_values(FILE *fp)
     return drtaint_shadow_write_shadow_values(fp);
 }
 
-static void
+void
 drtaint_dump_taint_to_log(void *drcontext)
 {
     file_t nudge_file = log_file_open(client_id, drcontext, NULL,
@@ -165,13 +165,12 @@ propagate_str(void *drcontext, void *tag, instrlist_t *ilist, instr_t *where)
 }
 
 static void
-propagate_mov_reg_src(void *drcontext, void *tag, instrlist_t *ilist, instr_t *where)
+propagate_mov_regs(void *drcontext, void *tag, instrlist_t *ilist, instr_t *where,
+                   reg_id_t reg1, reg_id_t reg2)
 {
     /* mov reg2, reg1 */
     auto sreg2 = drreg_reservation { ilist, where };
     auto sreg1 = drreg_reservation { ilist, where };
-    reg_id_t reg2 = opnd_get_reg(instr_get_dst(where, 0));
-    reg_id_t reg1 = opnd_get_reg(instr_get_src(where, 0));
 
     drtaint_insert_reg_to_taint(drcontext, ilist, where, reg1, sreg1);
     instrlist_meta_preinsert(ilist, where, XINST_CREATE_load_1byte
@@ -183,6 +182,15 @@ propagate_mov_reg_src(void *drcontext, void *tag, instrlist_t *ilist, instr_t *w
                              (drcontext,
                               OPND_CREATE_MEM8(sreg2, 0),
                               opnd_create_reg(sreg1)));
+}
+
+static void
+propagate_mov_reg_src(void *drcontext, void *tag, instrlist_t *ilist, instr_t *where)
+{
+    /* mov reg2, reg1 */
+    reg_id_t reg2 = opnd_get_reg(instr_get_dst(where, 0));
+    reg_id_t reg1 = opnd_get_reg(instr_get_src(where, 0));
+    propagate_mov_regs(drcontext, tag, ilist, where, reg1, reg2);
 }
 
 static void
@@ -355,17 +363,31 @@ event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *w
         else
             DR_ASSERT(false); /* add reg, imm, imm does not make sense */
         break;
-    case OP_b:
-    case OP_b_short:
     case OP_bl:
     case OP_blx:
     case OP_blx_ind:
-    case OP_bx:
+        propagate_mov_regs(drcontext, tag, ilist, where,
+                           DR_REG_PC, DR_REG_LR);
+        /* fallthrough, we could have a register dest */
     case OP_bxj:
+    case OP_bx:
+    case OP_b:
+    case OP_b_short:
+        /* could have register destination */
+        if (opnd_is_reg(instr_get_src(where, 0))) {
+            propagate_mov_regs(drcontext, tag, ilist, where,
+                               opnd_get_reg(instr_get_src(where, 0)),
+                               DR_REG_PC);
+        } else {
+            /* Technically, we're performing the operation
+             * PC = PC + off
+             */
+        }
+        break;
     case OP_cbz:
     case OP_cbnz:
         /* Nothing to do here, unless we want to support tainting
-         * pc in a useful capacity.
+         * eflags.
          */
         break;
     case OP_cmn:
