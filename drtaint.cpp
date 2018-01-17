@@ -287,25 +287,685 @@ propagate_arith_reg_reg(void *drcontext, void *tag, instrlist_t *ilist, instr_t 
                               opnd_create_reg(sreg1)));
 }
 
+static bool
+instr_is_simd(instr_t *where)
+{
+    int opcode = instr_get_opcode(where);
+    switch (opcode) {
+    case OP_vaba_s16:
+    case OP_vaba_s32:
+    case OP_vaba_s8:
+    case OP_vaba_u16:
+    case OP_vaba_u32:
+    case OP_vaba_u8:
+    case OP_vabal_s16:
+    case OP_vabal_s32:
+    case OP_vabal_s8:
+    case OP_vabal_u16:
+    case OP_vabal_u32:
+    case OP_vabal_u8:
+    case OP_vabd_s16:
+    case OP_vabd_s32:
+    case OP_vabd_s8:
+    case OP_vabd_u16:
+    case OP_vabd_u32:
+    case OP_vabd_u8:
+    case OP_vabdl_s16:
+    case OP_vabdl_s32:
+    case OP_vabdl_s8:
+    case OP_vabdl_u16:
+    case OP_vabdl_u32:
+    case OP_vabdl_u8:
+    case OP_vabs_f32:
+    case OP_vabs_f64:
+    case OP_vabs_s16:
+    case OP_vabs_s32:
+    case OP_vabs_s8:
+    case OP_vacge_f32:
+    case OP_vacgt_f32:
+    case OP_vadd_f32:
+    case OP_vadd_f64:
+    case OP_vadd_i16:
+    case OP_vadd_i32:
+    case OP_vadd_i64:
+    case OP_vadd_i8:
+    case OP_vaddhn_i16:
+    case OP_vaddhn_i32:
+    case OP_vaddhn_i64:
+    case OP_vaddl_s16:
+    case OP_vaddl_s32:
+    case OP_vaddl_s8:
+    case OP_vaddl_u16:
+    case OP_vaddl_u32:
+    case OP_vaddl_u8:
+    case OP_vaddw_s16:
+    case OP_vaddw_s32:
+    case OP_vaddw_s8:
+    case OP_vaddw_u16:
+    case OP_vaddw_u32:
+    case OP_vaddw_u8:
+    case OP_vand:
+    case OP_vbic:
+    case OP_vbic_i16:
+    case OP_vbic_i32:
+    case OP_vbif:
+    case OP_vbit:
+    case OP_vbsl:
+    case OP_vceq_f32:
+    case OP_vceq_i16:
+    case OP_vceq_i32:
+    case OP_vceq_i8:
+    case OP_vcge_f32:
+    case OP_vcge_s16:
+    case OP_vcge_s32:
+    case OP_vcge_s8:
+    case OP_vcge_u16:
+    case OP_vcge_u32:
+    case OP_vcge_u8:
+    case OP_vcgt_f32:
+    case OP_vcgt_s16:
+    case OP_vcgt_s32:
+    case OP_vcgt_s8:
+    case OP_vcgt_u16:
+    case OP_vcgt_u32:
+    case OP_vcgt_u8:
+    case OP_vcle_f32:
+    case OP_vcle_s16:
+    case OP_vcle_s32:
+    case OP_vcle_s8:
+    case OP_vcls_s16:
+    case OP_vcls_s32:
+    case OP_vcls_s8:
+    case OP_vclt_f32:
+    case OP_vclt_s16:
+    case OP_vclt_s32:
+    case OP_vclt_s8:
+    case OP_vclz_i16:
+    case OP_vclz_i32:
+    case OP_vclz_i8:
+    case OP_vcmp_f32:
+    case OP_vcmp_f64:
+    case OP_vcmpe_f32:
+    case OP_vcmpe_f64:
+    case OP_vcnt_8:
+    case OP_vcvt_f16_f32:
+    case OP_vcvt_f32_f16:
+    case OP_vcvt_f32_f64:
+    case OP_vcvt_f32_s16:
+    case OP_vcvt_f32_s32:
+    case OP_vcvt_f32_u16:
+    case OP_vcvt_f32_u32:
+    case OP_vcvt_f64_f32:
+    case OP_vcvt_f64_s16:
+    case OP_vcvt_f64_s32:
+    case OP_vcvt_f64_u16:
+    case OP_vcvt_f64_u32:
+    case OP_vcvt_s16_f32:
+    case OP_vcvt_s16_f64:
+    case OP_vcvt_s32_f32:
+    case OP_vcvt_s32_f64:
+    case OP_vcvt_u16_f32:
+    case OP_vcvt_u16_f64:
+    case OP_vcvt_u32_f32:
+    case OP_vcvt_u32_f64:
+    case OP_vcvta_s32_f32:
+    case OP_vcvta_s32_f64:
+    case OP_vcvta_u32_f32:
+    case OP_vcvta_u32_f64:
+    case OP_vcvtb_f16_f32:
+    case OP_vcvtb_f16_f64:
+    case OP_vcvtb_f32_f16:
+    case OP_vcvtb_f64_f16:
+    case OP_vcvtm_s32_f32:
+    case OP_vcvtm_s32_f64:
+    case OP_vcvtm_u32_f32:
+    case OP_vcvtm_u32_f64:
+    case OP_vcvtn_s32_f32:
+    case OP_vcvtn_s32_f64:
+    case OP_vcvtn_u32_f32:
+    case OP_vcvtn_u32_f64:
+    case OP_vcvtp_s32_f32:
+    case OP_vcvtp_s32_f64:
+    case OP_vcvtp_u32_f32:
+    case OP_vcvtp_u32_f64:
+    case OP_vcvtr_s32_f32:
+    case OP_vcvtr_s32_f64:
+    case OP_vcvtr_u32_f32:
+    case OP_vcvtr_u32_f64:
+    case OP_vcvtt_f16_f32:
+    case OP_vcvtt_f16_f64:
+    case OP_vcvtt_f32_f16:
+    case OP_vcvtt_f64_f16:
+    case OP_vdiv_f32:
+    case OP_vdiv_f64:
+    case OP_vdup_16:
+    case OP_vdup_32:
+    case OP_vdup_8:
+    case OP_veor:
+    case OP_vext:
+    case OP_vfma_f32:
+    case OP_vfma_f64:
+    case OP_vfms_f32:
+    case OP_vfms_f64:
+    case OP_vfnma_f32:
+    case OP_vfnma_f64:
+    case OP_vfnms_f32:
+    case OP_vfnms_f64:
+    case OP_vhadd_s16:
+    case OP_vhadd_s32:
+    case OP_vhadd_s8:
+    case OP_vhadd_u16:
+    case OP_vhadd_u32:
+    case OP_vhadd_u8:
+    case OP_vhsub_s16:
+    case OP_vhsub_s32:
+    case OP_vhsub_s8:
+    case OP_vhsub_u16:
+    case OP_vhsub_u32:
+    case OP_vhsub_u8:
+    case OP_vld1_16:
+    case OP_vld1_32:
+    case OP_vld1_64:
+    case OP_vld1_8:
+    case OP_vld1_dup_16:
+    case OP_vld1_dup_32:
+    case OP_vld1_dup_8:
+    case OP_vld1_lane_16:
+    case OP_vld1_lane_32:
+    case OP_vld1_lane_8:
+    case OP_vld2_16:
+    case OP_vld2_32:
+    case OP_vld2_8:
+    case OP_vld2_dup_16:
+    case OP_vld2_dup_32:
+    case OP_vld2_dup_8:
+    case OP_vld2_lane_16:
+    case OP_vld2_lane_32:
+    case OP_vld2_lane_8:
+    case OP_vld3_16:
+    case OP_vld3_32:
+    case OP_vld3_8:
+    case OP_vld3_dup_16:
+    case OP_vld3_dup_32:
+    case OP_vld3_dup_8:
+    case OP_vld3_lane_16:
+    case OP_vld3_lane_32:
+    case OP_vld3_lane_8:
+    case OP_vld4_16:
+    case OP_vld4_32:
+    case OP_vld4_8:
+    case OP_vld4_dup_16:
+    case OP_vld4_dup_32:
+    case OP_vld4_dup_8:
+    case OP_vld4_lane_16:
+    case OP_vld4_lane_32:
+    case OP_vld4_lane_8:
+    case OP_vldm:
+    case OP_vldmdb:
+    case OP_vldr:
+    case OP_vmax_f32:
+    case OP_vmax_s16:
+    case OP_vmax_s32:
+    case OP_vmax_s8:
+    case OP_vmax_u16:
+    case OP_vmax_u32:
+    case OP_vmax_u8:
+    case OP_vmaxnm_f32:
+    case OP_vmaxnm_f64:
+    case OP_vmin_f32:
+    case OP_vmin_s16:
+    case OP_vmin_s32:
+    case OP_vmin_s8:
+    case OP_vmin_u16:
+    case OP_vmin_u32:
+    case OP_vmin_u8:
+    case OP_vminnm_f32:
+    case OP_vminnm_f64:
+    case OP_vmla_f32:
+    case OP_vmla_f64:
+    case OP_vmla_i16:
+    case OP_vmla_i32:
+    case OP_vmla_i8:
+    case OP_vmlal_s16:
+    case OP_vmlal_s32:
+    case OP_vmlal_s8:
+    case OP_vmlal_u16:
+    case OP_vmlal_u32:
+    case OP_vmlal_u8:
+    case OP_vmls_f32:
+    case OP_vmls_f64:
+    case OP_vmls_i16:
+    case OP_vmls_i32:
+    case OP_vmls_i8:
+    case OP_vmlsl_s16:
+    case OP_vmlsl_s32:
+    case OP_vmlsl_s8:
+    case OP_vmlsl_u16:
+    case OP_vmlsl_u32:
+    case OP_vmlsl_u8:
+    case OP_vmov:
+    case OP_vmov_16:
+    case OP_vmov_32:
+    case OP_vmov_8:
+    case OP_vmov_f32:
+    case OP_vmov_f64:
+    case OP_vmov_i16:
+    case OP_vmov_i32:
+    case OP_vmov_i64:
+    case OP_vmov_i8:
+    case OP_vmov_s16:
+    case OP_vmov_s8:
+    case OP_vmov_u16:
+    case OP_vmov_u8:
+    case OP_vmovl_s16:
+    case OP_vmovl_s32:
+    case OP_vmovl_s8:
+    case OP_vmovl_u16:
+    case OP_vmovl_u32:
+    case OP_vmovl_u8:
+    case OP_vmovn_i16:
+    case OP_vmovn_i32:
+    case OP_vmovn_i64:
+    case OP_vmrs:
+    case OP_vmsr:
+    case OP_vmul_f32:
+    case OP_vmul_f64:
+    case OP_vmul_i16:
+    case OP_vmul_i32:
+    case OP_vmul_i8:
+    case OP_vmul_p32:
+    case OP_vmul_p8:
+    case OP_vmull_p32:
+    case OP_vmull_p8:
+    case OP_vmull_s16:
+    case OP_vmull_s32:
+    case OP_vmull_s8:
+    case OP_vmull_u16:
+    case OP_vmull_u32:
+    case OP_vmull_u8:
+    case OP_vmvn:
+    case OP_vmvn_i16:
+    case OP_vmvn_i32:
+    case OP_vneg_f32:
+    case OP_vneg_f64:
+    case OP_vneg_s16:
+    case OP_vneg_s32:
+    case OP_vneg_s8:
+    case OP_vnmla_f32:
+    case OP_vnmla_f64:
+    case OP_vnmls_f32:
+    case OP_vnmls_f64:
+    case OP_vnmul_f32:
+    case OP_vnmul_f64:
+    case OP_vorn:
+    case OP_vorr:
+    case OP_vorr_i16:
+    case OP_vorr_i32:
+    case OP_vpadal_s16:
+    case OP_vpadal_s32:
+    case OP_vpadal_s8:
+    case OP_vpadal_u16:
+    case OP_vpadal_u32:
+    case OP_vpadal_u8:
+    case OP_vpadd_f32:
+    case OP_vpadd_i16:
+    case OP_vpadd_i32:
+    case OP_vpadd_i8:
+    case OP_vpaddl_s16:
+    case OP_vpaddl_s32:
+    case OP_vpaddl_s8:
+    case OP_vpaddl_u16:
+    case OP_vpaddl_u32:
+    case OP_vpaddl_u8:
+    case OP_vpmax_f32:
+    case OP_vpmax_s16:
+    case OP_vpmax_s32:
+    case OP_vpmax_s8:
+    case OP_vpmax_u16:
+    case OP_vpmax_u32:
+    case OP_vpmax_u8:
+    case OP_vpmin_f32:
+    case OP_vpmin_s16:
+    case OP_vpmin_s32:
+    case OP_vpmin_s8:
+    case OP_vpmin_u16:
+    case OP_vpmin_u32:
+    case OP_vpmin_u8:
+    case OP_vqabs_s16:
+    case OP_vqabs_s32:
+    case OP_vqabs_s8:
+    case OP_vqadd_s16:
+    case OP_vqadd_s32:
+    case OP_vqadd_s64:
+    case OP_vqadd_s8:
+    case OP_vqadd_u16:
+    case OP_vqadd_u32:
+    case OP_vqadd_u64:
+    case OP_vqadd_u8:
+    case OP_vqdmlal_s16:
+    case OP_vqdmlal_s32:
+    case OP_vqdmlsl_s16:
+    case OP_vqdmlsl_s32:
+    case OP_vqdmulh_s16:
+    case OP_vqdmulh_s32:
+    case OP_vqdmull_s16:
+    case OP_vqdmull_s32:
+    case OP_vqmovn_s16:
+    case OP_vqmovn_s32:
+    case OP_vqmovn_s64:
+    case OP_vqmovn_u16:
+    case OP_vqmovn_u32:
+    case OP_vqmovn_u64:
+    case OP_vqmovun_s16:
+    case OP_vqmovun_s32:
+    case OP_vqmovun_s64:
+    case OP_vqneg_s16:
+    case OP_vqneg_s32:
+    case OP_vqneg_s8:
+    case OP_vqrdmulh_s16:
+    case OP_vqrdmulh_s32:
+    case OP_vqrshl_s16:
+    case OP_vqrshl_s32:
+    case OP_vqrshl_s64:
+    case OP_vqrshl_s8:
+    case OP_vqrshl_u16:
+    case OP_vqrshl_u32:
+    case OP_vqrshl_u64:
+    case OP_vqrshl_u8:
+    case OP_vqrshrn_s16:
+    case OP_vqrshrn_s32:
+    case OP_vqrshrn_s64:
+    case OP_vqrshrn_u16:
+    case OP_vqrshrn_u32:
+    case OP_vqrshrn_u64:
+    case OP_vqrshrun_s16:
+    case OP_vqrshrun_s32:
+    case OP_vqrshrun_s64:
+    case OP_vqshl_s16:
+    case OP_vqshl_s32:
+    case OP_vqshl_s64:
+    case OP_vqshl_s8:
+    case OP_vqshl_u16:
+    case OP_vqshl_u32:
+    case OP_vqshl_u64:
+    case OP_vqshl_u8:
+    case OP_vqshlu_s16:
+    case OP_vqshlu_s32:
+    case OP_vqshlu_s64:
+    case OP_vqshlu_s8:
+    case OP_vqshrn_s16:
+    case OP_vqshrn_s32:
+    case OP_vqshrn_s64:
+    case OP_vqshrn_u16:
+    case OP_vqshrn_u32:
+    case OP_vqshrn_u64:
+    case OP_vqshrun_s16:
+    case OP_vqshrun_s32:
+    case OP_vqshrun_s64:
+    case OP_vqsub_s16:
+    case OP_vqsub_s32:
+    case OP_vqsub_s64:
+    case OP_vqsub_s8:
+    case OP_vqsub_u16:
+    case OP_vqsub_u32:
+    case OP_vqsub_u64:
+    case OP_vqsub_u8:
+    case OP_vraddhn_i16:
+    case OP_vraddhn_i32:
+    case OP_vraddhn_i64:
+    case OP_vrecpe_f32:
+    case OP_vrecpe_u32:
+    case OP_vrecps_f32:
+    case OP_vrev16_16:
+    case OP_vrev16_8:
+    case OP_vrev32_16:
+    case OP_vrev32_32:
+    case OP_vrev32_8:
+    case OP_vrev64_16:
+    case OP_vrev64_32:
+    case OP_vrev64_8:
+    case OP_vrhadd_s16:
+    case OP_vrhadd_s32:
+    case OP_vrhadd_s8:
+    case OP_vrhadd_u16:
+    case OP_vrhadd_u32:
+    case OP_vrhadd_u8:
+    case OP_vrinta_f32_f32:
+    case OP_vrinta_f64_f64:
+    case OP_vrintm_f32_f32:
+    case OP_vrintm_f64_f64:
+    case OP_vrintn_f32_f32:
+    case OP_vrintn_f64_f64:
+    case OP_vrintp_f32_f32:
+    case OP_vrintp_f64_f64:
+    case OP_vrintr_f32:
+    case OP_vrintr_f64:
+    case OP_vrintx_f32:
+    case OP_vrintx_f32_f32:
+    case OP_vrintx_f64:
+    case OP_vrintz_f32:
+    case OP_vrintz_f32_f32:
+    case OP_vrintz_f64:
+    case OP_vrshl_s16:
+    case OP_vrshl_s32:
+    case OP_vrshl_s64:
+    case OP_vrshl_s8:
+    case OP_vrshl_u16:
+    case OP_vrshl_u32:
+    case OP_vrshl_u64:
+    case OP_vrshl_u8:
+    case OP_vrshr_s16:
+    case OP_vrshr_s32:
+    case OP_vrshr_s64:
+    case OP_vrshr_s8:
+    case OP_vrshr_u16:
+    case OP_vrshr_u32:
+    case OP_vrshr_u64:
+    case OP_vrshr_u8:
+    case OP_vrshrn_i16:
+    case OP_vrshrn_i32:
+    case OP_vrshrn_i64:
+    case OP_vrsqrte_f32:
+    case OP_vrsqrte_u32:
+    case OP_vrsqrts_f32:
+    case OP_vrsra_s16:
+    case OP_vrsra_s32:
+    case OP_vrsra_s64:
+    case OP_vrsra_s8:
+    case OP_vrsra_u16:
+    case OP_vrsra_u32:
+    case OP_vrsra_u64:
+    case OP_vrsra_u8:
+    case OP_vrsubhn_i16:
+    case OP_vrsubhn_i32:
+    case OP_vrsubhn_i64:
+    case OP_vsel_eq_f32:
+    case OP_vsel_eq_f64:
+    case OP_vsel_ge_f32:
+    case OP_vsel_ge_f64:
+    case OP_vsel_gt_f32:
+    case OP_vsel_gt_f64:
+    case OP_vsel_vs_f32:
+    case OP_vsel_vs_f64:
+    case OP_vshl_i16:
+    case OP_vshl_i32:
+    case OP_vshl_i64:
+    case OP_vshl_i8:
+    case OP_vshl_s16:
+    case OP_vshl_s32:
+    case OP_vshl_s64:
+    case OP_vshl_s8:
+    case OP_vshl_u16:
+    case OP_vshl_u32:
+    case OP_vshl_u64:
+    case OP_vshl_u8:
+    case OP_vshll_i16:
+    case OP_vshll_i32:
+    case OP_vshll_i8:
+    case OP_vshll_s16:
+    case OP_vshll_s32:
+    case OP_vshll_s8:
+    case OP_vshll_u16:
+    case OP_vshll_u32:
+    case OP_vshll_u8:
+    case OP_vshr_s16:
+    case OP_vshr_s32:
+    case OP_vshr_s64:
+    case OP_vshr_s8:
+    case OP_vshr_u16:
+    case OP_vshr_u32:
+    case OP_vshr_u64:
+    case OP_vshr_u8:
+    case OP_vshrn_i16:
+    case OP_vshrn_i32:
+    case OP_vshrn_i64:
+    case OP_vsli_16:
+    case OP_vsli_32:
+    case OP_vsli_64:
+    case OP_vsli_8:
+    case OP_vsqrt_f32:
+    case OP_vsqrt_f64:
+    case OP_vsra_s16:
+    case OP_vsra_s32:
+    case OP_vsra_s64:
+    case OP_vsra_s8:
+    case OP_vsra_u16:
+    case OP_vsra_u32:
+    case OP_vsra_u64:
+    case OP_vsra_u8:
+    case OP_vsri_16:
+    case OP_vsri_32:
+    case OP_vsri_64:
+    case OP_vsri_8:
+    case OP_vst1_16:
+    case OP_vst1_32:
+    case OP_vst1_64:
+    case OP_vst1_8:
+    case OP_vst1_lane_16:
+    case OP_vst1_lane_32:
+    case OP_vst1_lane_8:
+    case OP_vst2_16:
+    case OP_vst2_32:
+    case OP_vst2_8:
+    case OP_vst2_lane_16:
+    case OP_vst2_lane_32:
+    case OP_vst2_lane_8:
+    case OP_vst3_16:
+    case OP_vst3_32:
+    case OP_vst3_8:
+    case OP_vst3_lane_16:
+    case OP_vst3_lane_32:
+    case OP_vst3_lane_8:
+    case OP_vst4_16:
+    case OP_vst4_32:
+    case OP_vst4_8:
+    case OP_vst4_lane_16:
+    case OP_vst4_lane_32:
+    case OP_vst4_lane_8:
+    case OP_vstm:
+    case OP_vstmdb:
+    case OP_vstr:
+    case OP_vsub_f32:
+    case OP_vsub_f64:
+    case OP_vsub_i16:
+    case OP_vsub_i32:
+    case OP_vsub_i64:
+    case OP_vsub_i8:
+    case OP_vsubhn_i16:
+    case OP_vsubhn_i32:
+    case OP_vsubhn_i64:
+    case OP_vsubl_s16:
+    case OP_vsubl_s32:
+    case OP_vsubl_s8:
+    case OP_vsubl_u16:
+    case OP_vsubl_u32:
+    case OP_vsubl_u8:
+    case OP_vsubw_s16:
+    case OP_vsubw_s32:
+    case OP_vsubw_s8:
+    case OP_vsubw_u16:
+    case OP_vsubw_u32:
+    case OP_vsubw_u8:
+    case OP_vswp:
+    case OP_vtbl_8:
+    case OP_vtbx_8:
+    case OP_vtrn_16:
+    case OP_vtrn_32:
+    case OP_vtrn_8:
+    case OP_vtst_16:
+    case OP_vtst_32:
+    case OP_vtst_8:
+    case OP_vuzp_16:
+    case OP_vuzp_32:
+    case OP_vuzp_8:
+    case OP_vzip_16:
+    case OP_vzip_32:
+    case OP_vzip_8:
+        return true;
+    default:
+        return false;
+    }
+}
+
+/*
+ * NYI on a relatively large application:
+ * 'stmdb' NYI
+ * 'tbb' NYI
+ * 'ldm' NYI
+ * 'sel' NYI
+ * 'rev' NYI
+ * 'clz' NYI
+ * 'mla' NYI
+ * 'umull' NYI
+ * 'stm' NYI
+ * 'mrc' NYI
+ * 'tbh' NYI
+ * 'ldmdb' NYI
+ * 'mls' NYI
+ * 'ldrsh' NYI
+ * 'ldrsb' NYI
+ * 'rrx' NYI
+ * 'smull' NYI
+ * 'smlabb' NYI
+ * 'stmdb' NYI
+ * 'tbb' NYI
+ * 'ldm' NYI
+ * 'sel' NYI
+ * 'rev' NYI
+ * 'clz' NYI
+ * 'mla' NYI
+ * 'umull' NYI
+ * 'stm' NYI
+ * 'mrc' NYI
+ * 'mls' NYI
+ * 'smulbb' NYI
+ */
+
 static dr_emit_flags_t
 event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *where,
                       bool for_trace, bool translating, void *user_data)
 {
+    if (instr_is_simd(where))
+        return DR_EMIT_DEFAULT;
     switch (instr_get_opcode(where)) {
-    case OP_LABEL:
-        break;
     case OP_ldr:
     case OP_ldrb:
     case OP_ldrd:
     case OP_ldrh:
+    case OP_ldrex:
         propagate_ldr(drcontext, tag, ilist, where);
         break;
     case OP_str:
     case OP_strb:
     case OP_strd:
     case OP_strh:
+    case OP_strex:
+        /* For OP_strex, failure is written to a second dst operand,
+         * but this isn't controllable.
+         */
         propagate_str(drcontext, tag, ilist, where);
         break;
+
     case OP_mov:
     case OP_mvn:
     case OP_mvns:
@@ -317,6 +977,19 @@ event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *w
         else
             propagate_mov_imm_src(drcontext, tag, ilist, where);
         break;
+
+    case OP_sbfx:
+    case OP_ubfx:
+    case OP_uxtb:
+    case OP_uxth:
+    case OP_sxtb:
+    case OP_sxth:
+        /* These aren't mov's per se, but they only accept 1
+         * reg source and 1 reg dest.
+         */
+        propagate_mov_reg_src(drcontext, tag, ilist, where);
+        break;
+
     case OP_adc:
     case OP_adcs:
     case OP_add:
@@ -363,6 +1036,7 @@ event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *w
         else
             DR_ASSERT(false); /* add reg, imm, imm does not make sense */
         break;
+
     case OP_bl:
     case OP_blx:
     case OP_blx_ind:
@@ -378,12 +1052,10 @@ event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *w
             propagate_mov_regs(drcontext, tag, ilist, where,
                                opnd_get_reg(instr_get_src(where, 0)),
                                DR_REG_PC);
-        } else {
-            /* Technically, we're performing the operation
-             * PC = PC + off
-             */
         }
+        /* we don't have to do anything for immediates */
         break;
+
     case OP_cbz:
     case OP_cbnz:
         /* Nothing to do here, unless we want to support tainting
@@ -398,14 +1070,19 @@ event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *w
          * eflags.
          */
         break;
+
+    case OP_LABEL:
     case OP_svc:
-        break;
     case OP_nop:
-        break;
     case OP_pld:
-        break;
     case OP_dmb:
         break;
+
+    case OP_bfi:
+    case OP_bfc:
+    case OP_teq:
+        break;
+
     default:
         unimplemented_opcode(where);
         break;

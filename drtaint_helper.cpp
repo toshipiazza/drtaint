@@ -1,5 +1,6 @@
 #include <iostream>
 #include <unordered_set>
+#include <exception>
 
 #include "drtaint_helper.h"
 
@@ -8,17 +9,14 @@ drreg_reservation(instrlist_t *ilist, instr_t *where)
     : drcontext_(dr_get_current_drcontext()),
       ilist_(ilist), where_(where)
 {
-   if (drreg_reserve_register(drcontext_, ilist_, where_, NULL, &reg_)
-       != DRREG_SUCCESS)
-       DR_ASSERT(false);
+    if (drreg_reserve_register(drcontext_, ilist_, where_, NULL, &reg_) != DRREG_SUCCESS)
+        throw std::exception();
 }
 
 drreg_reservation::
 ~drreg_reservation()
 {
-    if (drreg_unreserve_register(drcontext_, ilist_, where_, reg_)
-        != DRREG_SUCCESS)
-        DR_ASSERT(false);
+    drreg_unreserve_register(drcontext_, ilist_, where_, reg_);
 }
 
 static std::unordered_set<int> seen;
