@@ -33,6 +33,9 @@ event_post_syscall(void *drcontext, int sysnum);
 DR_EXPORT void
 dr_client_main(client_id_t id, int argc, const char *argv[])
 {
+
+    if (!droption_parser_t::parse_argv(DROPTION_SCOPE_CLIENT, argc, argv, NULL, NULL))
+        DR_ASSERT(false);
     drmgr_init();
     drtaint_init(id);
     drmgr_register_thread_init_event(event_thread_init);
