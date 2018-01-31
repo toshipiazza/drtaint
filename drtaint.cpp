@@ -290,8 +290,7 @@ propagate_arith_reg_reg(void *drcontext, void *tag, instrlist_t *ilist, instr_t 
 static bool
 instr_is_simd(instr_t *where)
 {
-    int opcode = instr_get_opcode(where);
-    switch (opcode) {
+    switch (instr_get_opcode(where)) {
     case OP_vaba_s16:
     case OP_vaba_s32:
     case OP_vaba_s8:
@@ -984,10 +983,23 @@ event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *w
     case OP_uxth:
     case OP_sxtb:
     case OP_sxth:
+    case OP_rev:
+    case OP_rev16:
         /* These aren't mov's per se, but they only accept 1
          * reg source and 1 reg dest.
          */
         propagate_mov_reg_src(drcontext, tag, ilist, where);
+        break;
+
+    case OP_sel:
+    case OP_clz:
+        /* These aren't mov's per se, but they only accept 1
+         * reg source and 1 dest.
+         */
+        if (opnd_is_reg(instr_get_src(where, 0)))
+            propagate_mov_reg_src(drcontext, tag, ilist, where);
+        else
+            propagate_mov_imm_src(drcontext, tag, ilist, where);
         break;
 
     case OP_adc:
@@ -1011,6 +1023,7 @@ event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *w
     case OP_eors:
     case OP_mul:
     case OP_orr:
+    case OP_ror:
     case OP_orrs:
     case OP_lsl:
     case OP_lsls:
@@ -1073,6 +1086,9 @@ event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *w
 
     case OP_LABEL:
     case OP_svc:
+    case OP_ldc:
+    case OP_mcr:
+    case OP_mrc:
     case OP_nop:
     case OP_pld:
     case OP_dmb:

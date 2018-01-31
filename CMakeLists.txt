@@ -6,7 +6,7 @@ set(DrMemoryFramework_DIR /home/piazzt/install/exports32/drmf)
 
 set(CMAKE_CXX_STANDARD 11)
 add_library(drtaint SHARED
-  sample_app.c
+  sample_app.cpp
   drtaint.cpp
   drtaint_shadow.c
   drtaint_helper.cpp
@@ -19,3 +19,4 @@ use_DynamoRIO_extension(drtaint "drmgr")
 use_DynamoRIO_extension(drtaint "umbra")
 use_DynamoRIO_extension(drtaint "drutil")
 use_DynamoRIO_extension(drtaint "drx")
+use_DynamoRIO_extension(drtaint "droption")
