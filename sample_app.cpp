@@ -58,7 +58,7 @@ static droption_t<bool> dump_taint_on_exit
  "to visualize taint introduced via the taint source API");
 
 static app_pc exe_start;
-static bool   tainted_argv;
+static bool tainted_argv;
 
 DR_EXPORT void
 dr_client_main(client_id_t id, int argc, const char *argv[])
@@ -95,9 +95,12 @@ exit_event(void)
     void *drcontext = dr_get_current_drcontext();
     if (dump_taint_on_exit.get_value())
         drtaint_dump_taint_to_log(drcontext);
+    drmgr_unregister_bb_instrumentation_event(event_bb_analysis);
+    drmgr_unregister_bb_insertion_event(event_app_instruction);
     drmgr_unregister_thread_init_event(event_thread_init);
     drtaint_exit();
     drmgr_exit();
+    drreg_exit();
 }
 
 static void
@@ -141,27 +144,30 @@ event_app_instruction(void *drcontext, void *tag, instrlist_t *bb, instr_t *inst
     auto argv = drreg_reservation { bb, instr };
     auto envp = drreg_reservation { bb, instr };
 
-    instrlist_meta_preinsert(bb, instr, XINST_CREATE_load
-                             (drcontext,
-                              opnd_create_reg(argc),
-                              OPND_CREATE_MEM32(DR_REG_SP, 0)));
-    instrlist_meta_preinsert(bb, instr, INSTR_CREATE_add
-                             (drcontext,
-                              opnd_create_reg(argv),
-                              opnd_create_reg(DR_REG_SP),
-                              OPND_CREATE_INT(4)));
-    instrlist_meta_preinsert(bb, instr, INSTR_CREATE_add_shimm
-                             (drcontext,
-                              opnd_create_reg(envp),
-                              opnd_create_reg(argv),
-                              opnd_create_reg(argc),
-                              OPND_CREATE_INT(DR_SHIFT_LSR),
-                              OPND_CREATE_INT(2)));
+#define MINSERT instrlist_meta_preinsert
+    MINSERT(bb, instr, XINST_CREATE_load
+            (drcontext,
+             opnd_create_reg(argc),
+             OPND_CREATE_MEM32(DR_REG_SP, 0)));
+    MINSERT(bb, instr, INSTR_CREATE_add
+            (drcontext,
+             opnd_create_reg(argv),
+             opnd_create_reg(DR_REG_SP),
+             OPND_CREATE_INT(4)));
+    MINSERT(bb, instr, INSTR_CREATE_add_shimm
+            (drcontext,
+             opnd_create_reg(envp),
+             opnd_create_reg(argv),
+             opnd_create_reg(argc),
+             OPND_CREATE_INT(DR_SHIFT_LSL),
+             OPND_CREATE_INT(2)));
     dr_insert_clean_call(drcontext, bb, instr,
-                         (void *)taint_argv_envp, false, 3,
+                         (void *)taint_argv_envp,
+                         false, 3,
                          opnd_create_reg(argc),
                          opnd_create_reg(argv),
                          opnd_create_reg(envp));
+#undef MINSERT
     /* Since we're no longer idempotent, we request that this
      * block's translations are stored permanently.
      */
@@ -195,9 +201,7 @@ event_pre_syscall(void *drcontext, int sysnum)
          * a fault, though we currently don't expose a function to
          * do this.
          */
-        /* We increment in strides of 4 due to shadow memory scale.
-         */
-        for (i = 0; i < len; i += 4) {
+        for (i = 0; i < len; ++i) {
             byte result;
             if (drtaint_get_app_taint(drcontext, (app_pc)&buffer[i],
                                       &result) && result != 0) {
