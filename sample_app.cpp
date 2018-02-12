@@ -196,10 +196,10 @@ event_pre_syscall(void *drcontext, int sysnum)
         size_t len   = dr_syscall_get_param(drcontext, 2);
         int i;
 
-        /* TODO: We can probably make this faster by translating from
-         * app to shadow, then using dr_safe_read() to read until
-         * a fault, though we currently don't expose a function to
-         * do this.
+        /* TODO: We can probably make this faster by translating
+         * from app to shadow, then using dr_safe_read() to read
+         * until a fault, though we currently don't expose a
+         * function to do this.
          */
         for (i = 0; i < len; ++i) {
             byte result;
@@ -227,6 +227,17 @@ event_post_syscall(void *drcontext, int sysnum)
 static void
 taint_argv_envp(int argc, char *argv[], char *envp[])
 {
-    dr_printf("Tainting argv(%p) and envp(%p)\n", argv, envp);
-    /* XXX: we should actually taint these */
+    void *drcontext = dr_get_current_drcontext();
+    int i;
+
+    /* taint argv on the stack */
+    for (i = 0; i < argc; ++i) {
+        drtaint_set_app_taint(drcontext, (app_pc)argv[i],
+                              STCK_POINTER_TAINT);
+    }
+    /* taint envp on the stack */
+    for (i = 0; envp[i]; ++i) {
+        drtaint_set_app_taint(drcontext, (app_pc)envp[i],
+                              STCK_POINTER_TAINT);
+    }
 }
