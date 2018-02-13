@@ -906,6 +906,97 @@ instr_is_simd(instr_t *where)
     }
 }
 
+static void
+propagate_ldm_cc(void *pc)
+{
+    void *drcontext = dr_get_current_drcontext();
+    instr_t *instr = instr_create(drcontext);
+
+    decode(drcontext, (byte *)pc, instr);
+    DR_ASSERT(instr_get_opcode(instr) == OP_ldm);
+    if (instr_get_opcode(instr) != OP_ldm) {
+        instr_destroy(drcontext, instr);
+        return;
+    }
+
+    /* get the base register */
+    dr_mcontext_t mcontext = {sizeof(mcontext),DR_MC_ALL,};
+    dr_get_mcontext(drcontext, &mcontext);
+    void *base = (void *)reg_get_value(opnd_get_base(instr_get_src(instr, 0)), &mcontext);
+
+    for (int i = 0; i < instr_num_dsts(instr); ++i) {
+        bool ok;
+        /* this indicates a writeback */
+        if (instr_num_srcs(instr) == 2 &&
+            (opnd_get_reg(instr_get_dst(instr, i)) ==
+             opnd_get_reg(instr_get_src(instr, 1))))
+            break;
+        /* Set taint from stack to the
+         * appropriate register.
+         */
+        byte res;
+        ok = drtaint_get_app_taint(drcontext, (app_pc)base + 4*(i+1), &res);
+        DR_ASSERT(ok);
+        ok = drtaint_set_reg_taint(drcontext, opnd_get_reg(instr_get_dst(instr, i)), res);
+        DR_ASSERT(ok);
+    }
+
+    instr_destroy(drcontext, instr);
+}
+
+static void
+propagate_stm_cc(void *pc)
+{
+    void *drcontext = dr_get_current_drcontext();
+    instr_t *instr = instr_create(drcontext);
+
+    decode(drcontext, (byte *)pc, instr);
+    DR_ASSERT(instr_get_opcode(instr) == OP_stmdb);
+    if (instr_get_opcode(instr) != OP_stmdb) {
+        instr_destroy(drcontext, instr);
+        return;
+    }
+
+    /* get the base reg */
+    dr_mcontext_t mcontext = {sizeof(mcontext),DR_MC_ALL,};
+    dr_get_mcontext(drcontext, &mcontext);
+    void *base = (void *)reg_get_value(opnd_get_base(instr_get_dst(instr, 0)), &mcontext);
+
+    for (int i = 0; i < instr_num_srcs(instr); ++i) {
+        bool ok;
+        /* this indicates a writeback */
+        if (instr_num_dsts(instr) == 2 &&
+            (opnd_get_reg(instr_get_src(instr, i)) ==
+             opnd_get_reg(instr_get_dst(instr, 1))))
+            break;
+        /* set taint from registers to the stack */
+        byte res;
+        ok = drtaint_get_reg_taint(drcontext, opnd_get_reg(instr_get_src(instr, i)), &res);
+        DR_ASSERT(ok);
+        int top = instr_num_dsts(instr);
+        ok = drtaint_set_app_taint(drcontext, (app_pc)base - 4*(top - i), res);
+        DR_ASSERT(ok);
+    }
+
+    instr_destroy(drcontext, instr);
+}
+
+static void
+propagate_ldm(void *drcontext, void *tag, instrlist_t *ilist, instr_t *where)
+{
+    app_pc pc = instr_get_app_pc(where);
+    dr_insert_clean_call(drcontext, ilist, where, (void *)propagate_ldm_cc,
+                         false, 1, OPND_CREATE_INTPTR(pc));
+}
+
+static void
+propagate_stm(void *drcontext, void *tag, instrlist_t *ilist, instr_t *where)
+{
+    app_pc pc = instr_get_app_pc(where);
+    dr_insert_clean_call(drcontext, ilist, where, (void *)propagate_stm_cc,
+                         false, 1, OPND_CREATE_INTPTR(pc));
+}
+
 /*
  * NYI on a relatively large application:
  * 'stmdb' NYI
@@ -928,18 +1019,15 @@ instr_is_simd(instr_t *where)
  * 'smlabb' NYI
  * 'stmdb' NYI
  * 'tbb' NYI
- * 'ldm' NYI
  * 'sel' NYI
  * 'rev' NYI
  * 'clz' NYI
  * 'mla' NYI
  * 'umull' NYI
- * 'stm' NYI
  * 'mrc' NYI
  * 'mls' NYI
  * 'smulbb' NYI
  */
-
 static dr_emit_flags_t
 event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *where,
                       bool for_trace, bool translating, void *user_data)
@@ -947,6 +1035,22 @@ event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *w
     if (instr_is_simd(where))
         return DR_EMIT_DEFAULT;
     switch (instr_get_opcode(where)) {
+    case OP_ldm:
+        propagate_ldm(drcontext, tag, ilist, where);
+        /* don't worry about write-back; write back implies something
+         * of the form SP = SP + 0x10, so we just keep the original
+         * taint value
+         */
+        break;
+
+    case OP_stmdb:
+        propagate_stm(drcontext, tag, ilist, where);
+        /* don't worry about write-back; write back implies something
+         * of the form SP = SP + 0x10, so we just keep the original
+         * taint value
+         */
+        break;
+
     case OP_ldr:
     case OP_ldrb:
     case OP_ldrd:

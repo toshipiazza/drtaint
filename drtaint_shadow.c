@@ -85,7 +85,7 @@ drtaint_shadow_insert_app_to_shadow(void *drcontext, instrlist_t *ilist, instr_t
 bool
 drtaint_shadow_get_app_taint(void *drcontext, app_pc app, byte *result)
 {
-    size_t sz;
+    size_t sz = 1;
     bool ret = umbra_read_shadow_memory(umbra_map, app, 4,
                                         &sz, result) != DRMF_ERROR_INVALID_ADDRESS;
     DR_ASSERT(sz == 1);
