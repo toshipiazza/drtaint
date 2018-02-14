@@ -8,6 +8,8 @@
 #include "drtaint_helper.h"
 #include "utils.h"
 
+static bool debug = false;
+
 static dr_emit_flags_t
 event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *where,
                       bool for_trace, bool translating, void *user_data);
@@ -924,9 +926,11 @@ propagate_ldm_cc(void *pc)
     dr_get_mcontext(drcontext, &mcontext);
     void *base = (void *)reg_get_value(opnd_get_base(instr_get_src(instr, 0)), &mcontext);
 
-    dr_printf("pc=%p base=%p ", pc, base);
-    instr_disassemble(drcontext, instr, STDOUT);
-    dr_printf("\n");
+    if (debug) {
+        dr_printf("pc=%p base=%p ", pc, base);
+        instr_disassemble(drcontext, instr, STDOUT);
+        dr_printf("\n");
+    }
 
     for (int i = 0; i < instr_num_dsts(instr); ++i) {
         bool ok;
@@ -939,14 +943,15 @@ propagate_ldm_cc(void *pc)
          * appropriate register.
          */
         byte res;
-        ok = drtaint_get_app_taint(drcontext, (app_pc)base + 4*(i+1), &res);
+        ok = drtaint_get_app_taint(drcontext, (app_pc)base + 4*i, &res);
         DR_ASSERT(ok);
         ok = drtaint_set_reg_taint(drcontext, opnd_get_reg(instr_get_dst(instr, i)), res);
         DR_ASSERT(ok);
-        dr_printf("{%s=%d} ",
-                get_register_name(opnd_get_reg(instr_get_dst(instr, i))), res);
+        if (debug)
+            dr_printf("{%s=%d} ", get_register_name(opnd_get_reg(instr_get_dst(instr, i))), res);
     }
-    dr_printf("\n");
+    if (debug)
+        dr_printf("\n");
 
     instr_destroy(drcontext, instr);
 }
@@ -973,9 +978,11 @@ propagate_stm_cc(void *pc)
     dr_get_mcontext(drcontext, &mcontext);
     void *base = (void *)reg_get_value(opnd_get_base(instr_get_dst(instr, 0)), &mcontext);
 
-    dr_printf("pc=%p base=%p ", pc, base);
-    instr_disassemble(drcontext, instr, STDOUT);
-    dr_printf("\n");
+    if (debug) {
+        dr_printf("pc=%p base=%p ", pc, base);
+        instr_disassemble(drcontext, instr, STDOUT);
+        dr_printf("\n");
+    }
 
     for (int i = 0; i < instr_num_srcs(instr); ++i) {
         bool ok;
@@ -988,14 +995,18 @@ propagate_stm_cc(void *pc)
         byte res;
         ok = drtaint_get_reg_taint(drcontext, opnd_get_reg(instr_get_src(instr, i)), &res);
         DR_ASSERT(ok);
-        int top = instr_num_dsts(instr);
-        app_pc addr = down ? (app_pc)base - 4*(top-i+1)
-                           : (app_pc)base + 4*(i+1);
+        int top = instr_num_dsts(instr) == 2 ?
+            instr_num_srcs(instr) :
+            instr_num_srcs(instr) - 1;
+        app_pc addr = down ? (app_pc)base - 4*(top-i-1)
+                           : (app_pc)base + 4*i;
         ok = drtaint_set_app_taint(drcontext, addr, res);
         DR_ASSERT(ok);
-        dr_printf("{%s=%d} ", get_register_name(opnd_get_reg(instr_get_src(instr, i))), res);
+        if (debug)
+            dr_printf("{%s=%d} ", get_register_name(opnd_get_reg(instr_get_src(instr, i))), res);
     }
-    dr_printf("\n");
+    if (debug)
+        dr_printf("\n");
 
     instr_destroy(drcontext, instr);
 }
