@@ -924,6 +924,10 @@ propagate_ldm_cc(void *pc)
     dr_get_mcontext(drcontext, &mcontext);
     void *base = (void *)reg_get_value(opnd_get_base(instr_get_src(instr, 0)), &mcontext);
 
+    dr_printf("pc=%p base=%p ", pc, base);
+    instr_disassemble(drcontext, instr, STDOUT);
+    dr_printf("\n");
+
     for (int i = 0; i < instr_num_dsts(instr); ++i) {
         bool ok;
         /* this indicates a writeback */
@@ -939,7 +943,10 @@ propagate_ldm_cc(void *pc)
         DR_ASSERT(ok);
         ok = drtaint_set_reg_taint(drcontext, opnd_get_reg(instr_get_dst(instr, i)), res);
         DR_ASSERT(ok);
+        dr_printf("{%s=%d} ",
+                get_register_name(opnd_get_reg(instr_get_dst(instr, i))), res);
     }
+    dr_printf("\n");
 
     instr_destroy(drcontext, instr);
 }
@@ -951,16 +958,24 @@ propagate_stm_cc(void *pc)
     instr_t *instr = instr_create(drcontext);
 
     decode(drcontext, (byte *)pc, instr);
-    DR_ASSERT(instr_get_opcode(instr) == OP_stmdb);
-    if (instr_get_opcode(instr) != OP_stmdb) {
+    DR_ASSERT(instr_get_opcode(instr) == OP_stmdb ||
+              instr_get_opcode(instr) == OP_stm);
+    if (instr_get_opcode(instr) != OP_stmdb &&
+        instr_get_opcode(instr) != OP_stm) {
         instr_destroy(drcontext, instr);
         return;
     }
+
+    bool down = instr_get_opcode(instr) == OP_stmdb;
 
     /* get the base reg */
     dr_mcontext_t mcontext = {sizeof(mcontext),DR_MC_ALL,};
     dr_get_mcontext(drcontext, &mcontext);
     void *base = (void *)reg_get_value(opnd_get_base(instr_get_dst(instr, 0)), &mcontext);
+
+    dr_printf("pc=%p base=%p ", pc, base);
+    instr_disassemble(drcontext, instr, STDOUT);
+    dr_printf("\n");
 
     for (int i = 0; i < instr_num_srcs(instr); ++i) {
         bool ok;
@@ -974,9 +989,13 @@ propagate_stm_cc(void *pc)
         ok = drtaint_get_reg_taint(drcontext, opnd_get_reg(instr_get_src(instr, i)), &res);
         DR_ASSERT(ok);
         int top = instr_num_dsts(instr);
-        ok = drtaint_set_app_taint(drcontext, (app_pc)base - 4*(top - i), res);
+        app_pc addr = down ? (app_pc)base - 4*(top-i+1)
+                           : (app_pc)base + 4*(i+1);
+        ok = drtaint_set_app_taint(drcontext, addr, res);
         DR_ASSERT(ok);
+        dr_printf("{%s=%d} ", get_register_name(opnd_get_reg(instr_get_src(instr, i))), res);
     }
+    dr_printf("\n");
 
     instr_destroy(drcontext, instr);
 }
@@ -999,7 +1018,6 @@ propagate_stm(void *drcontext, void *tag, instrlist_t *ilist, instr_t *where)
 
 /*
  * NYI on a relatively large application:
- * 'stmdb' NYI
  * 'tbb' NYI
  * 'ldm' NYI
  * 'sel' NYI
@@ -1037,18 +1055,11 @@ event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *w
     switch (instr_get_opcode(where)) {
     case OP_ldm:
         propagate_ldm(drcontext, tag, ilist, where);
-        /* don't worry about write-back; write back implies something
-         * of the form SP = SP + 0x10, so we just keep the original
-         * taint value
-         */
         break;
 
+    case OP_stm:
     case OP_stmdb:
         propagate_stm(drcontext, tag, ilist, where);
-        /* don't worry about write-back; write back implies something
-         * of the form SP = SP + 0x10, so we just keep the original
-         * taint value
-         */
         break;
 
     case OP_ldr:

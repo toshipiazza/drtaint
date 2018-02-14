@@ -187,6 +187,21 @@ event_filter_syscall(void *drcontext, int sysnum)
         sysnum == SYS_send;
 }
 
+static const char *
+taint2leak(char a)
+{
+    switch (a) {
+    case STCK_POINTER_TAINT:
+        return "STACK";
+    case HEAP_POINTER_TAINT:
+        return "HEAP";
+    case TEXT_POINTER_TAINT:
+        return "TEXT";
+    default:
+        return "UNKNOWN"; 
+    }
+}
+
 static bool
 event_pre_syscall(void *drcontext, int sysnum)
 {
@@ -205,7 +220,7 @@ event_pre_syscall(void *drcontext, int sysnum)
             byte result;
             if (drtaint_get_app_taint(drcontext, (app_pc)&buffer[i],
                                       &result) && result != 0) {
-                dr_printf("Detected address leak: %c\n", result);
+                dr_printf("Detected address leak (%s)\n", taint2leak(result));
                 /* fail the syscall to prevent the leak */
                 return false;
             }
