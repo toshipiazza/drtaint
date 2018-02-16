@@ -32,6 +32,12 @@ exit_event(void);
 static void
 event_thread_init(void *drcontext);
 
+static void
+event_thread_context_init(void *drcontext, bool new_depth);
+
+static void
+event_thread_context_exit(void *drcontext, bool process_exit);
+
 static bool
 event_filter_syscall(void *drcontext, int sysnum);
 
@@ -58,8 +64,15 @@ static droption_t<bool> dump_taint_on_exit
  "On exit of app, dump taint profile that can be parsed into a bitmap by vis.py "
  "to visualize taint introduced via the taint source API");
 
+typedef struct {
+    /* recv/read parameters */
+    char  *buf;
+    size_t len;
+} per_thread_t;
+
 static app_pc exe_start;
 static bool tainted_argv;
+static int tcls_idx;
 
 DR_EXPORT void
 dr_client_main(client_id_t id, int argc, const char *argv[])
@@ -87,6 +100,9 @@ dr_client_main(client_id_t id, int argc, const char *argv[])
     dr_register_filter_syscall_event(event_filter_syscall);
     drmgr_register_pre_syscall_event(event_pre_syscall);
     drmgr_register_post_syscall_event(event_post_syscall);
+    tcls_idx = drmgr_register_cls_field(event_thread_context_init,
+                                        event_thread_context_exit);
+    DR_ASSERT(tcls_idx != -1);
     dr_register_exit_event(exit_event);
 }
 
@@ -96,6 +112,9 @@ exit_event(void)
     void *drcontext = dr_get_current_drcontext();
     if (dump_taint_on_exit.get_value())
         drtaint_dump_taint_to_log(drcontext);
+    drmgr_unregister_cls_field(event_thread_context_init,
+                               event_thread_context_exit,
+                               tcls_idx);
     drmgr_unregister_bb_instrumentation_event(event_bb_analysis);
     drmgr_unregister_bb_insertion_event(event_app_instruction);
     drmgr_unregister_thread_init_event(event_thread_init);
@@ -103,6 +122,10 @@ exit_event(void)
     drmgr_exit();
     drreg_exit();
 }
+
+/****************************************************************************
+ * Taint everything we can on process startup
+ */
 
 static void
 event_thread_init(void *drcontext)
@@ -181,6 +204,49 @@ event_app_instruction(void *drcontext, void *tag, instrlist_t *bb, instr_t *inst
     return DR_EMIT_STORE_TRANSLATIONS;
 }
 
+static void
+taint_argv_envp(int argc, char *argv[], char *envp[])
+{
+    void *drcontext = dr_get_current_drcontext();
+    int i;
+
+    /* taint argv on the stack */
+    for (i = 0; i < argc; ++i) {
+        drtaint_set_app_taint(drcontext, (app_pc)argv+i,
+                              STCK_POINTER_TAINT);
+    }
+    /* taint envp on the stack */
+    for (i = 0; envp[i]; ++i) {
+        drtaint_set_app_taint(drcontext, (app_pc)envp+i,
+                              STCK_POINTER_TAINT);
+    }
+}
+
+/****************************************************************************
+ * Introduce taint sinks and sources
+ */
+
+static void
+event_thread_context_init(void *drcontext, bool new_depth)
+{
+    per_thread_t *data;
+    if (new_depth) {
+        data = (per_thread_t *) dr_thread_alloc(drcontext, sizeof(per_thread_t));
+        drmgr_set_cls_field(drcontext, tcls_idx, data);
+    } else
+        data = (per_thread_t *) drmgr_get_cls_field(drcontext, tcls_idx);
+    memset(data, 0, sizeof(*data));
+}
+
+static void
+event_thread_context_exit(void *drcontext, bool thread_exit)
+{
+    if (thread_exit) {
+        per_thread_t *data = (per_thread_t *) drmgr_get_cls_field(drcontext, tcls_idx);
+        dr_thread_free(drcontext, data, sizeof(per_thread_t));
+    }
+}
+
 static bool
 event_filter_syscall(void *drcontext, int sysnum)
 {
@@ -202,9 +268,10 @@ taint2leak(char a)
     case HEAP_POINTER_TAINT:
         return "HEAP";
     case TEXT_POINTER_TAINT:
-        /* N.B I don't expect to catch any errors with this;
-         * however TEXT_POINTER_TAINT was introduced because
-         * it made debugging a lot easier.
+        /* N.B. Currently tainting PC is pretty much a "hack", and in fact
+         * probably doesn't really work, especially when calling into a
+         * libc function. However, intuitively this *should* cause all .text
+         * leaks to fail.
          */
         return "TEXT";
     default:
@@ -234,20 +301,12 @@ event_pre_syscall(void *drcontext, int sysnum)
     }
 
     if (sysnum == SYS_recv || sysnum == SYS_read) {
-        /* We want to at least clear the taint on a reads since it
-         * overwrites whatever was already on the stack
+        /* Save this information for later, so we can handle the
+         * read *only* if it didn't fail.
          */
-        char *buffer = (char *)dr_syscall_get_param(drcontext, 1);
-        size_t len   = dr_syscall_get_param(drcontext, 2);
-        int i;
-
-        for (i = 0; i < len; ++i) {
-            if (!drtaint_set_app_taint(drcontext,
-                                       (app_pc)&buffer[i], 0)) {
-                /* XXX: we should check if read failed first */
-                return false;
-            }
-        }
+        per_thread_t *data = (per_thread_t *) drmgr_get_cls_field(drcontext, tcls_idx);
+        data->buf = (char *)dr_syscall_get_param(drcontext, 1);
+        data->len = dr_syscall_get_param(drcontext, 2);
     }
     return true;
 }
@@ -270,22 +329,17 @@ event_post_syscall(void *drcontext, int sysnum)
         drtaint_set_reg_taint(drcontext, DR_REG_R0,
                               HEAP_POINTER_TAINT);
     }
-}
 
-static void
-taint_argv_envp(int argc, char *argv[], char *envp[])
-{
-    void *drcontext = dr_get_current_drcontext();
-    int i;
+    if (sysnum == SYS_recv || sysnum == SYS_read) {
+        /* We want to at least clear the taint on a reads since it
+         * overwrites whatever was already on the stack
+         */
+        per_thread_t *data = (per_thread_t *) drmgr_get_cls_field(drcontext, tcls_idx);
+        int i;
 
-    /* taint argv on the stack */
-    for (i = 0; i < argc; ++i) {
-        drtaint_set_app_taint(drcontext, (app_pc)argv+i,
-                              STCK_POINTER_TAINT);
-    }
-    /* taint envp on the stack */
-    for (i = 0; envp[i]; ++i) {
-        drtaint_set_app_taint(drcontext, (app_pc)envp+i,
-                              STCK_POINTER_TAINT);
+        for (i = 0; i < data->len; ++i) {
+            bool ok = drtaint_set_app_taint(drcontext, (app_pc)data->buf + i, 0);
+            DR_ASSERT(ok);
+        }
     }
 }
