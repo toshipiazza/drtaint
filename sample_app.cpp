@@ -14,7 +14,6 @@
  *
  * - all stck addresses are relative to SP, and argv/envp
  * - all heap addresses are relative to `brk` or `mmap2` syscalls
- * - all text references are PC-relative (?)
  * - TODO: all libc references must go through the GOT and thus through
  *   _dl_runtime_resolve()
  *
@@ -198,6 +197,10 @@ taint2leak(char a)
     case HEAP_POINTER_TAINT:
         return "HEAP";
     case TEXT_POINTER_TAINT:
+        /* N.B I don't expect to catch any errors with this;
+         * however TEXT_POINTER_TAINT was introduced because
+         * it made debugging a lot easier.
+         */
         return "TEXT";
     default:
         return "UNKNOWN"; 
@@ -207,17 +210,12 @@ taint2leak(char a)
 static bool
 event_pre_syscall(void *drcontext, int sysnum)
 {
-    /* check for taint sinks */
     if (sysnum == SYS_write || sysnum == SYS_send) {
+        /* we want to check these for taint */
         char *buffer = (char *)dr_syscall_get_param(drcontext, 1);
         size_t len   = dr_syscall_get_param(drcontext, 2);
         int i;
 
-        /* TODO: We can probably make this faster by translating
-         * from app to shadow, then using dr_safe_read() to read
-         * until a fault, though we currently don't expose a
-         * function to do this.
-         */
         for (i = 0; i < len; ++i) {
             byte result;
             if (drtaint_get_app_taint(drcontext, (app_pc)&buffer[i],
@@ -239,11 +237,9 @@ event_pre_syscall(void *drcontext, int sysnum)
         int i;
 
         for (i = 0; i < len; ++i) {
-            if (!drtaint_set_app_taint(drcontext, (app_pc)&buffer[i], 0)) {
-                /* XXX: If we couldn't set the app taint, then the
-                 * read was invalid. We shouldn't have set the taint
-                 * at all in this case...
-                 */
+            if (!drtaint_set_app_taint(drcontext,
+                                       (app_pc)&buffer[i], 0)) {
+                /* XXX: we should check if read failed first */
                 return false;
             }
         }
@@ -264,7 +260,6 @@ event_post_syscall(void *drcontext, int sysnum)
         return;
     }
 
-    /* check for taint sources */
     if (sysnum == SYS_mmap2 || sysnum == SYS_brk) {
         /* we want to taint the return value here */
         drtaint_set_reg_taint(drcontext, DR_REG_R0,
@@ -280,12 +275,12 @@ taint_argv_envp(int argc, char *argv[], char *envp[])
 
     /* taint argv on the stack */
     for (i = 0; i < argc; ++i) {
-        drtaint_set_app_taint(drcontext, (app_pc)argv[i],
+        drtaint_set_app_taint(drcontext, (app_pc)argv+i,
                               STCK_POINTER_TAINT);
     }
     /* taint envp on the stack */
     for (i = 0; envp[i]; ++i) {
-        drtaint_set_app_taint(drcontext, (app_pc)envp[i],
+        drtaint_set_app_taint(drcontext, (app_pc)envp+i,
                               STCK_POINTER_TAINT);
     }
 }
