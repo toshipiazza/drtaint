@@ -14,10 +14,12 @@
  *
  * - all stck addresses are relative to SP, and argv/envp
  * - all heap addresses are relative to `brk` or `mmap2` syscalls
- * - all libc leaks must be PC-relative (?)
+ * - all text references are PC-relative (?)
+ * - TODO: all libc references must go through the GOT and thus through
+ *   _dl_runtime_resolve()
  *
- * We also consider exposing an annotations library; if one wishes to modify
- * libc, i.e. to taint `__stack_chk_guard` (stack cookie) or to taint
+ * We also consider exposing an annotations library (TODO); if one wishes to
+ * modify libc, i.e. to taint `__stack_chk_guard` (stack cookie) or to taint
  * `__pointer_chk_guard` (pointer encryption)
  */
 
@@ -220,10 +222,28 @@ event_pre_syscall(void *drcontext, int sysnum)
             byte result;
             if (drtaint_get_app_taint(drcontext, (app_pc)&buffer[i],
                                       &result) && result != 0) {
-                dr_fprintf(STDERR, "Detected address leak (%s) (%c)\n",
-                           taint2leak(result),
-                           buffer[i]);
+                dr_fprintf(STDERR, "Detected address leak (%s)\n",
+                           taint2leak(result));
                 /* fail the syscall to prevent the leak */
+                return false;
+            }
+        }
+    }
+
+    if (sysnum == SYS_recv || sysnum == SYS_read) {
+        /* We want to at least clear the taint on a reads since it
+         * overwrites whatever was already on the stack
+         */
+        char *buffer = (char *)dr_syscall_get_param(drcontext, 1);
+        size_t len   = dr_syscall_get_param(drcontext, 2);
+        int i;
+
+        for (i = 0; i < len; ++i) {
+            if (!drtaint_set_app_taint(drcontext, (app_pc)&buffer[i], 0)) {
+                /* XXX: If we couldn't set the app taint, then the
+                 * read was invalid. We shouldn't have set the taint
+                 * at all in this case...
+                 */
                 return false;
             }
         }
@@ -234,6 +254,16 @@ event_pre_syscall(void *drcontext, int sysnum)
 static void
 event_post_syscall(void *drcontext, int sysnum)
 {
+    dr_syscall_result_info_t info = { sizeof(info), };
+    dr_syscall_get_result_ex(drcontext, &info);
+
+    if (!info.succeeded) {
+        /* We only care about tainting if the syscall
+         * succeeded.
+         */
+        return;
+    }
+
     /* check for taint sources */
     if (sysnum == SYS_mmap2 || sysnum == SYS_brk) {
         /* we want to taint the return value here */

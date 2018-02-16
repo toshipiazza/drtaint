@@ -1030,7 +1030,6 @@ propagate_stm(void *drcontext, void *tag, instrlist_t *ilist, instr_t *where)
 /*
  * NYI on a relatively large application:
  * 'tbb' NYI
- * 'ldm' NYI
  * 'sel' NYI
  * 'rev' NYI
  * 'clz' NYI
@@ -1061,8 +1060,10 @@ static dr_emit_flags_t
 event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *where,
                       bool for_trace, bool translating, void *user_data)
 {
-    if (instr_is_simd(where))
+    if (instr_is_simd(where)) {
+        unimplemented_opcode(where);
         return DR_EMIT_DEFAULT;
+    }
     switch (instr_get_opcode(where)) {
     case OP_ldm:
         propagate_ldm(drcontext, tag, ilist, where);

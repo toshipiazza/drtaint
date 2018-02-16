@@ -3,28 +3,26 @@
 #include <string.h>
 #include <stdlib.h>
 
-int bar(int a, int b, int c, int d)
+void print_hash(unsigned int i)
 {
-    a = 1;
-    b = 2;
-    c = 3;
-    d = 4;
+    int hash = 0x41424344;
+    for (int j = 0; j < 100; ++j)
+        hash = (hash ^ i) + 0x41424344;
+    write(1, &hash, 4);
 }
 
-int foo(int a, int b, int c, int d)
+int main(void)
 {
-    bar(a, b, c, d);
-    return a + b + c + d;
-}
-
-int _start(void)
-{
-    char j[100] = "Hello world from the stack!\n";
-    foo(0xdead, 0xbeef, 0xcafe, 0xbabe);
-    char *k = &j;
-    write(1, &k, 4);
-    char *i = malloc(100);
-    strcpy(i, "Hello world from the heap!\n");
-    write(1, &i, 4);
-    _exit(0);
+    int *s = alloca(100);
+    int *h = malloc(100);
+    printf("Printing leaks with write()\n");
+    write(1, &s, 4);
+    write(1, &h, 4);
+    printf("Printing leaks with fwrite()\n");
+    fwrite(&s, 4, 1, stdout);
+    fwrite(&h, 4, 1, stdout);
+    printf("Printing obfuscated leaks\n");
+    print_hash((unsigned int)s);
+    print_hash((unsigned int)h);
+    return 0;
 }
