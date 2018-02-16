@@ -139,6 +139,7 @@ event_app_instruction(void *drcontext, void *tag, instrlist_t *bb, instr_t *inst
      * ldr r0, [sp]
      * add r1, sp, #4
      * add r2, r1, r0, LSL #2
+     * add r2, 4
      * call clean_call
      */
     auto argc = drreg_reservation { bb, instr };
@@ -162,6 +163,10 @@ event_app_instruction(void *drcontext, void *tag, instrlist_t *bb, instr_t *inst
              opnd_create_reg(argc),
              OPND_CREATE_INT(DR_SHIFT_LSL),
              OPND_CREATE_INT(2)));
+    MINSERT(bb, instr, XINST_CREATE_add
+            (drcontext,
+             opnd_create_reg(envp),
+             OPND_CREATE_INT(4)));
     dr_insert_clean_call(drcontext, bb, instr,
                          (void *)taint_argv_envp,
                          false, 3,
