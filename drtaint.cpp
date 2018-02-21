@@ -8,8 +8,6 @@
 #include "drtaint_helper.h"
 #include "utils.h"
 
-static bool debug = false;
-
 static dr_emit_flags_t
 event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *where,
                       bool for_trace, bool translating, void *user_data);
@@ -926,12 +924,6 @@ propagate_ldm_cc(void *pc)
     dr_get_mcontext(drcontext, &mcontext);
     void *base = (void *)reg_get_value(opnd_get_base(instr_get_src(instr, 0)), &mcontext);
 
-    if (debug) {
-        dr_printf("pc=%p base=%p ", pc, base);
-        instr_disassemble(drcontext, instr, STDOUT);
-        dr_printf("\n");
-    }
-
     for (int i = 0; i < instr_num_dsts(instr); ++i) {
         bool ok;
         /* this indicates a writeback */
@@ -947,12 +939,7 @@ propagate_ldm_cc(void *pc)
         DR_ASSERT(ok);
         ok = drtaint_set_reg_taint(drcontext, opnd_get_reg(instr_get_dst(instr, i)), res);
         DR_ASSERT(ok);
-        if (debug)
-            dr_printf("{%s=%d} ", get_register_name(opnd_get_reg(instr_get_dst(instr, i))), res);
     }
-    if (debug)
-        dr_printf("\n");
-
     instr_destroy(drcontext, instr);
 }
 
@@ -978,12 +965,6 @@ propagate_stm_cc(void *pc)
     dr_get_mcontext(drcontext, &mcontext);
     void *base = (void *)reg_get_value(opnd_get_base(instr_get_dst(instr, 0)), &mcontext);
 
-    if (debug) {
-        dr_printf("pc=%p base=%p ", pc, base);
-        instr_disassemble(drcontext, instr, STDOUT);
-        dr_printf("\n");
-    }
-
     for (int i = 0; i < instr_num_srcs(instr); ++i) {
         bool ok;
         /* this indicates a writeback */
@@ -1002,12 +983,7 @@ propagate_stm_cc(void *pc)
                            : (app_pc)base + 4*i;
         ok = drtaint_set_app_taint(drcontext, addr, res);
         DR_ASSERT(ok);
-        if (debug)
-            dr_printf("{%s=%d} ", get_register_name(opnd_get_reg(instr_get_src(instr, i))), res);
     }
-    if (debug)
-        dr_printf("\n");
-
     instr_destroy(drcontext, instr);
 }
 
@@ -1027,35 +1003,6 @@ propagate_stm(void *drcontext, void *tag, instrlist_t *ilist, instr_t *where)
                          false, 1, OPND_CREATE_INTPTR(pc));
 }
 
-/*
- * NYI on a relatively large application:
- * 'tbb' NYI
- * 'sel' NYI
- * 'rev' NYI
- * 'clz' NYI
- * 'mla' NYI
- * 'umull' NYI
- * 'stm' NYI
- * 'mrc' NYI
- * 'tbh' NYI
- * 'ldmdb' NYI
- * 'mls' NYI
- * 'ldrsh' NYI
- * 'ldrsb' NYI
- * 'rrx' NYI
- * 'smull' NYI
- * 'smlabb' NYI
- * 'stmdb' NYI
- * 'tbb' NYI
- * 'sel' NYI
- * 'rev' NYI
- * 'clz' NYI
- * 'mla' NYI
- * 'umull' NYI
- * 'mrc' NYI
- * 'mls' NYI
- * 'smulbb' NYI
- */
 static dr_emit_flags_t
 event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *where,
                       bool for_trace, bool translating, void *user_data)
