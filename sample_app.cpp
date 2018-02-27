@@ -289,9 +289,8 @@ event_pre_syscall(void *drcontext, int sysnum)
             byte result;
             if (drtaint_get_app_taint(drcontext, (app_pc)&buffer[i],
                                       &result) && result != 0) {
-                dr_fprintf(STDERR, "Detected address leak %s@" PFX "\n",
-                           taint2leak(result),
-                           buffer + i);
+                dr_fprintf(STDERR, "Detected address leak %s\n",
+                           taint2leak(result));
                 /* fail the syscall to prevent the leak */
                 return false;
             }

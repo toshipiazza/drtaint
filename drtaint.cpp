@@ -255,6 +255,47 @@ propagate_arith_reg_imm(void *drcontext, void *tag, instrlist_t *ilist, instr_t 
 }
 
 static void
+propagate_umull(void *drcontext, void *tag, instrlist_t *ilist, instr_t *where)
+{
+    /* umull reg4, reg3, reg2, reg1 */
+    auto sreg1 = drreg_reservation { ilist, where };
+    auto sreg2 = drreg_reservation { ilist, where };
+    auto sreg3 = drreg_reservation { ilist, where };
+    reg_id_t sreg4 = sreg3; /* we reuse a register for this */
+
+    reg_id_t reg1 = opnd_get_reg(instr_get_src(where, 0));
+    reg_id_t reg2 = opnd_get_reg(instr_get_src(where, 1));
+    reg_id_t reg3 = opnd_get_reg(instr_get_dst(where, 0));
+    reg_id_t reg4 = opnd_get_reg(instr_get_dst(where, 1));
+
+    drtaint_insert_reg_to_taint(drcontext, ilist, where, reg1, sreg1);
+    instrlist_meta_preinsert(ilist, where, XINST_CREATE_load_1byte
+                             (drcontext,
+                              opnd_create_reg(sreg1),
+                              OPND_CREATE_MEM8(sreg1, 0)));
+    drtaint_insert_reg_to_taint(drcontext, ilist, where, reg2, sreg2);
+    instrlist_meta_preinsert(ilist, where, XINST_CREATE_load_1byte
+                             (drcontext,
+                              opnd_create_reg(sreg2),
+                              OPND_CREATE_MEM8(sreg2, 0)));
+    instrlist_meta_preinsert(ilist, where, INSTR_CREATE_orr
+                             (drcontext,
+                              opnd_create_reg(sreg1),
+                              opnd_create_reg(sreg2),
+                              opnd_create_reg(sreg1)));
+    drtaint_insert_reg_to_taint(drcontext, ilist, where, reg3, sreg3);
+    instrlist_meta_preinsert(ilist, where, XINST_CREATE_store_1byte
+                             (drcontext,
+                              OPND_CREATE_MEM8(sreg3, 0),
+                              opnd_create_reg(sreg1)));
+    drtaint_insert_reg_to_taint(drcontext, ilist, where, reg4, sreg4);
+    instrlist_meta_preinsert(ilist, where, XINST_CREATE_store_1byte
+                             (drcontext,
+                              OPND_CREATE_MEM8(sreg4, 0),
+                              opnd_create_reg(sreg1)));
+}
+
+static void
 propagate_arith_reg_reg(void *drcontext, void *tag, instrlist_t *ilist, instr_t *where)
 {
     /* add reg3, reg2, reg1 */
@@ -1124,6 +1165,10 @@ event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *w
             DR_ASSERT(false); /* add reg, imm, imm does not make sense */
         break;
 
+    case OP_umull:
+        propagate_umull(drcontext, tag, ilist, where);
+        break;
+
     case OP_bl:
     case OP_blx:
     case OP_blx_ind:
@@ -1177,5 +1222,6 @@ event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *w
         unimplemented_opcode(where);
         break;
     }
+
     return DR_EMIT_DEFAULT;
 }
