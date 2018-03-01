@@ -1,28 +1,36 @@
 #include <stdio.h>
-#include <unistd.h>
-#include <string.h>
 #include <stdlib.h>
 
-void print_hash(unsigned int i)
+int main(int argc, char **argv)
 {
-    int hash = 0x41424344;
-    for (int j = 0; j < 100; ++j)
-        hash = (hash ^ i) + 0x41424344;
-    write(1, &hash, 4);
-}
+    if (argc == 2) {
+        /* meant to facilitate code leaks */
+        unsigned int addr = strtoul(argv[1], NULL, 16);
+        fwrite((void *)addr, 4, 1, stdout);
+        return 0;
+    }
 
-int main(void)
-{
-    int *s = alloca(100);
-    int *h = malloc(100);
-    printf("Printing leaks with write()\n");
-    write(1, &s, 4);
-    write(1, &h, 4);
-    printf("Printing leaks with fwrite()\n");
-    fwrite(&s, 4, 1, stdout);
-    fwrite(&h, 4, 1, stdout);
-    printf("Printing obfuscated leaks\n");
-    print_hash((unsigned int)s);
-    print_hash((unsigned int)h);
+    /* leak fastbin freelist next pointer, which is a heap leak */
+    unsigned int *a = malloc(10);
+    unsigned int *b = malloc(10);
+    unsigned int *c = malloc(10);
+    free(a);
+    free(c);
+    fwrite(c,  4, 1, stdout);
+
+    /* leak heap address from the stack */
+    fwrite(&c, 4, 1, stdout);
+
+    /* leak stack address from the stack */
+    unsigned int **d = &c;
+    fwrite(&d, 4, 1, stdout);
+
+    /* leak stack address from environ */
+    extern char **environ;
+    fwrite(environ, 4, 1, stdout);
+
+    /* leak a libc address provided by the loader */
+    fwrite(&stdout, 4, 1, stdout);
+
     return 0;
 }

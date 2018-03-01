@@ -12,13 +12,15 @@
 
 /* This sample tries to prevent address leaks in an active exploitation
  * scenario. We identify 3 types of leaks (stack, heap, and libc or .text). If
- * we taint all areas on process startup that are "randomized" or protected,
- * then we can determine if an address leak has occurred on `send`.
+ * we taint all areas on where pointers are introduced, then we can determine
+ * if an address leak has occurred on `send`.
  *
  * - all stck addresses are relative to SP, and argv/envp
  * - all heap addresses are relative to `brk` or `mmap2` syscalls
- * - TODO: all libc references must go through the GOT and thus through
- *   _dl_runtime_resolve()
+ * - libc leaks occur through the dyn.plt or dyn.rel sections; we can taint them
+ *   up front assuming LD_BIND_NOW=1
+ * - other .text leaks occur when PC is used as an operand to some arithmetic or
+ *   data movement instruction
  *
  * We also consider exposing an annotations library (TODO); if one wishes to
  * modify libc, i.e. to taint `__stack_chk_guard` (stack cookie) or to taint
@@ -54,12 +56,16 @@ static void
 event_post_syscall(void *drcontext, int sysnum);
 
 static dr_emit_flags_t
-event_bb_analysis(void *drcontext, void *tag, instrlist_t *bb,
-                  bool for_trace, bool translating, void **user_data);
+event_bb_analysis_argv(void *drcontext, void *tag, instrlist_t *bb,
+                       bool for_trace, bool translating, void **user_data);
 
 static dr_emit_flags_t
-event_app_instruction(void *drcontext, void *tag, instrlist_t *bb, instr_t *instr,
-                      bool for_trace, bool translating, void *user_data);
+event_app_instruction_argv(void *drcontext, void *tag, instrlist_t *bb, instr_t *instr,
+                           bool for_trace, bool translating, void *user_data);
+
+static dr_emit_flags_t
+event_app_instruction_pc(void *drcontext, void *tag, instrlist_t *bb, instr_t *instr,
+                           bool for_trace, bool translating, void *user_data);
 
 static void
 taint_argv_envp(int argc, char *argv[], char *envp[]);
@@ -82,25 +88,30 @@ static int tcls_idx;
 DR_EXPORT void
 dr_client_main(client_id_t id, int argc, const char *argv[])
 {
-    drreg_options_t  ops = {sizeof(ops), 3, false};
-    module_data_t *exe;
 
-    if (!droption_parser_t::parse_argv(DROPTION_SCOPE_CLIENT, argc, argv, NULL, NULL))
-        DR_ASSERT(false);
+    droption_parser_t::parse_argv(DROPTION_SCOPE_CLIENT, argc, argv, NULL, NULL);
     /* get main module address */
-    exe = dr_get_main_module();
+    module_data_t *exe = dr_get_main_module();
     DR_ASSERT(exe != NULL);
     if (exe != NULL)
         exe_start = exe->start;
     dr_free_module_data(exe);
 
+    drtaint_init(id);
     drmgr_init();
-    drmgr_register_bb_instrumentation_event(event_bb_analysis,
-                                            event_app_instruction,
+    drmgr_register_bb_instrumentation_event(event_bb_analysis_argv,
+                                            event_app_instruction_argv,
                                             NULL);
+    drmgr_priority_t pri = { sizeof(pri), "drtaint.pc",
+                             DRMGR_PRIORITY_NAME_DRTAINT, NULL,
+                             DRMGR_PRIORITY_INSERT_DRTAINT };
+    drmgr_register_bb_instrumentation_event(NULL,
+                                            event_app_instruction_pc,
+                                            &pri);
+
+    drreg_options_t  ops = {sizeof(ops), 3, false};
     drreg_init(&ops);
 
-    drtaint_init(id);
     drmgr_register_thread_init_event(event_thread_init);
     dr_register_filter_syscall_event(event_filter_syscall);
     drmgr_register_pre_syscall_event(event_pre_syscall);
@@ -120,8 +131,9 @@ exit_event(void)
     drmgr_unregister_cls_field(event_thread_context_init,
                                event_thread_context_exit,
                                tcls_idx);
-    drmgr_unregister_bb_instrumentation_event(event_bb_analysis);
-    drmgr_unregister_bb_insertion_event(event_app_instruction);
+    drmgr_unregister_bb_instrumentation_event(event_bb_analysis_argv);
+    drmgr_unregister_bb_insertion_event(event_app_instruction_argv);
+    drmgr_unregister_bb_insertion_event(event_app_instruction_pc);
     drmgr_unregister_thread_init_event(event_thread_init);
     drtaint_exit();
     drmgr_exit();
@@ -136,12 +148,11 @@ static void
 event_thread_init(void *drcontext)
 {
     drtaint_set_reg_taint(drcontext, DR_REG_SP, STCK_POINTER_TAINT);
-    drtaint_set_reg_taint(drcontext, DR_REG_PC, TEXT_POINTER_TAINT);
 }
 
 static dr_emit_flags_t
-event_bb_analysis(void *drcontext, void *tag, instrlist_t *bb,
-                  bool for_trace, bool translating, void **user_data)
+event_bb_analysis_argv(void *drcontext, void *tag, instrlist_t *bb,
+                       bool for_trace, bool translating, void **user_data)
 {
 
     *user_data = (void *)false;
@@ -155,8 +166,8 @@ event_bb_analysis(void *drcontext, void *tag, instrlist_t *bb,
 }
 
 static dr_emit_flags_t
-event_app_instruction(void *drcontext, void *tag, instrlist_t *bb, instr_t *instr,
-                      bool for_trace, bool translating, void *user_data)
+event_app_instruction_argv(void *drcontext, void *tag, instrlist_t *bb, instr_t *instr,
+                           bool for_trace, bool translating, void *user_data)
 {
     if (!user_data ||
         !drmgr_is_first_instr(drcontext, instr))
@@ -230,6 +241,39 @@ taint_argv_envp(int argc, char *argv[], char *envp[])
  * Introduce taint sinks and sources
  */
 
+static dr_emit_flags_t
+event_app_instruction_pc(void *drcontext, void *tag, instrlist_t *bb, instr_t *instr,
+                         bool for_trace, bool translating, void *user_data)
+{
+    int i;
+    bool should_taint = false;
+
+    /* If PC is read, we taint it so that the following app instruction spreads its
+     * taint accordingly.
+     * TODO: for performance, instead of tainting PC, we should taint the destination
+     * operand directly, and only if this was an arithmetic or data movement
+     * instruction at that.
+     */
+    for (i = 0; i < instr_num_srcs(instr); ++i) {
+        should_taint |= opnd_uses_reg(
+                instr_get_src(instr, i), DR_REG_PC);
+    }
+    if (should_taint) {
+        auto sreg1 = drreg_reservation { bb, instr };
+        auto sreg2 = drreg_reservation { bb, instr };
+        instrlist_meta_preinsert(bb, instr, XINST_CREATE_move
+                                 (drcontext,
+                                  opnd_create_reg(sreg2),
+                                  OPND_CREATE_INT(TEXT_POINTER_TAINT)));
+        drtaint_insert_reg_to_taint(drcontext, bb, instr, DR_REG_PC, sreg1);
+        instrlist_meta_preinsert(bb, instr, XINST_CREATE_store_1byte
+                                 (drcontext,
+                                  OPND_CREATE_MEM8(sreg1, 0),
+                                  opnd_create_reg(sreg2)));
+    }
+    return DR_EMIT_DEFAULT;
+}
+
 static void
 event_thread_context_init(void *drcontext, bool new_depth)
 {
@@ -257,26 +301,6 @@ event_filter_syscall(void *drcontext, int sysnum)
     return true;
 }
 
-static const char *
-taint2leak(char a)
-{
-    switch (a) {
-    case STCK_POINTER_TAINT:
-        return "STACK";
-    case HEAP_POINTER_TAINT:
-        return "HEAP";
-    case TEXT_POINTER_TAINT:
-        /* N.B. Currently tainting PC is pretty much a "hack", and in fact
-         * probably doesn't really work, especially when calling into a
-         * libc function. However, intuitively this *should* cause all .text
-         * leaks to fail.
-         */
-        return "TEXT";
-    default:
-        return "UNKNOWN"; 
-    }
-}
-
 static bool
 event_pre_syscall(void *drcontext, int sysnum)
 {
@@ -289,8 +313,7 @@ event_pre_syscall(void *drcontext, int sysnum)
             byte result;
             if (drtaint_get_app_taint(drcontext, (app_pc)&buffer[i],
                                       &result) && result != 0) {
-                dr_fprintf(STDERR, "Detected address leak %s\n",
-                           taint2leak(result));
+                dr_fprintf(STDERR, "Detected address leak\n");
                 /* fail the syscall to prevent the leak */
                 return false;
             }
