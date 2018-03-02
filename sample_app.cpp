@@ -5,6 +5,7 @@
 #include "droption.h"
 #include "drtaint_helper.h"
 
+#include <iostream>
 #include <sys/utsname.h>
 #include <sys/stat.h>
 #include <syscall.h>
@@ -56,25 +57,41 @@ static void
 event_post_syscall(void *drcontext, int sysnum);
 
 static dr_emit_flags_t
-event_bb_analysis_argv(void *drcontext, void *tag, instrlist_t *bb,
-                       bool for_trace, bool translating, void **user_data);
+event_bb_analysis_start(void *drcontext, void *tag, instrlist_t *bb,
+                        bool for_trace, bool translating, void **user_data);
 
 static dr_emit_flags_t
-event_app_instruction_argv(void *drcontext, void *tag, instrlist_t *bb, instr_t *instr,
-                           bool for_trace, bool translating, void *user_data);
+event_app_instruction_start(void *drcontext, void *tag, instrlist_t *bb, instr_t *instr,
+                            bool for_trace, bool translating, void *user_data);
 
 static dr_emit_flags_t
 event_app_instruction_pc(void *drcontext, void *tag, instrlist_t *bb, instr_t *instr,
                            bool for_trace, bool translating, void *user_data);
 
 static void
-taint_argv_envp(int argc, char *argv[], char *envp[]);
+taint_stack_and_relocs(int argc, char *argv[], char *envp[]);
 
 static droption_t<bool> dump_taint_on_exit
 (DROPTION_SCOPE_CLIENT, "dump_taint_on_exit", false,
  "Dump taint profile to file on exit",
  "On exit of app, dump taint profile that can be parsed into a bitmap by vis.py "
  "to visualize taint introduced via the taint source API");
+
+static droption_t<std::string> dynrel
+(DROPTION_SCOPE_CLIENT, "with_dynrel", "",
+ "List of all entries in the .rel.dyn section of the target binary",
+ "Taint all entries in dynrel (those entries in the .rel.dyn section) preemptively "
+ "to mitigate intermodular reference leaks");
+
+/* TODO: pltrel should be tainted lazily if RELRO is off, or LD_BIND_NOW=1 is
+ * unspecified however we do not support this mode of operation right now since
+ * drwrap cannot easily hook __dl_runtime_resolve.
+ */
+static droption_t<std::string> pltrel
+(DROPTION_SCOPE_CLIENT, "with_pltrel", "",
+ "List of all entries in the .rel.plt section of the target binary",
+ "Taint all entries in pltrel (those entries in the .rel.plt section) preemptively "
+ "to mitigate intermodular reference leaks");
 
 typedef struct {
     /* {recv,read,uname} parameter */
@@ -88,7 +105,6 @@ static int tcls_idx;
 DR_EXPORT void
 dr_client_main(client_id_t id, int argc, const char *argv[])
 {
-
     droption_parser_t::parse_argv(DROPTION_SCOPE_CLIENT, argc, argv, NULL, NULL);
     /* get main module address */
     module_data_t *exe = dr_get_main_module();
@@ -99,9 +115,11 @@ dr_client_main(client_id_t id, int argc, const char *argv[])
 
     drtaint_init(id);
     drmgr_init();
-    drmgr_register_bb_instrumentation_event(event_bb_analysis_argv,
-                                            event_app_instruction_argv,
+    drmgr_register_bb_instrumentation_event(event_bb_analysis_start,
+                                            event_app_instruction_start,
                                             NULL);
+
+    /* we want the pc instru pass to come before the taint instru pass */
     drmgr_priority_t pri = { sizeof(pri), "drtaint.pc",
                              DRMGR_PRIORITY_NAME_DRTAINT, NULL,
                              DRMGR_PRIORITY_INSERT_DRTAINT };
@@ -131,8 +149,8 @@ exit_event(void)
     drmgr_unregister_cls_field(event_thread_context_init,
                                event_thread_context_exit,
                                tcls_idx);
-    drmgr_unregister_bb_instrumentation_event(event_bb_analysis_argv);
-    drmgr_unregister_bb_insertion_event(event_app_instruction_argv);
+    drmgr_unregister_bb_instrumentation_event(event_bb_analysis_start);
+    drmgr_unregister_bb_insertion_event(event_app_instruction_start);
     drmgr_unregister_bb_insertion_event(event_app_instruction_pc);
     drmgr_unregister_thread_init_event(event_thread_init);
     drtaint_exit();
@@ -147,12 +165,13 @@ exit_event(void)
 static void
 event_thread_init(void *drcontext)
 {
-    drtaint_set_reg_taint(drcontext, DR_REG_SP, STCK_POINTER_TAINT);
+    drtaint_set_reg_taint(drcontext, DR_REG_SP,
+                          STCK_POINTER_TAINT);
 }
 
 static dr_emit_flags_t
-event_bb_analysis_argv(void *drcontext, void *tag, instrlist_t *bb,
-                       bool for_trace, bool translating, void **user_data)
+event_bb_analysis_start(void *drcontext, void *tag, instrlist_t *bb,
+                        bool for_trace, bool translating, void **user_data)
 {
 
     *user_data = (void *)false;
@@ -166,8 +185,8 @@ event_bb_analysis_argv(void *drcontext, void *tag, instrlist_t *bb,
 }
 
 static dr_emit_flags_t
-event_app_instruction_argv(void *drcontext, void *tag, instrlist_t *bb, instr_t *instr,
-                           bool for_trace, bool translating, void *user_data)
+event_app_instruction_start(void *drcontext, void *tag, instrlist_t *bb, instr_t *instr,
+                            bool for_trace, bool translating, void *user_data)
 {
     if (!user_data ||
         !drmgr_is_first_instr(drcontext, instr))
@@ -207,7 +226,7 @@ event_app_instruction_argv(void *drcontext, void *tag, instrlist_t *bb, instr_t 
              opnd_create_reg(envp),
              OPND_CREATE_INT(4)));
     dr_insert_clean_call(drcontext, bb, instr,
-                         (void *)taint_argv_envp,
+                         (void *)taint_stack_and_relocs,
                          false, 3,
                          opnd_create_reg(argc),
                          opnd_create_reg(argv),
@@ -221,19 +240,49 @@ event_app_instruction_argv(void *drcontext, void *tag, instrlist_t *bb, instr_t 
 }
 
 static void
-taint_argv_envp(int argc, char *argv[], char *envp[])
+taint_stack_and_relocs(int argc, char *argv[], char *envp[])
 {
     void *drcontext = dr_get_current_drcontext();
 
     /* taint argv on the stack */
+    dr_printf("[argv] Tainting argv\n");
     for (int i = 0; i < argc; ++i) {
         drtaint_set_app_taint(drcontext, (app_pc)argv+i,
                               STCK_POINTER_TAINT);
     }
     /* taint envp on the stack */
+    dr_printf("[envp] Tainting envp\n");
     for (int i = 0; envp[i]; ++i) {
         drtaint_set_app_taint(drcontext, (app_pc)envp+i,
                               STCK_POINTER_TAINT);
+    }
+
+    /* we also taint the GOT (.dyn.rel and .dyn.plt sections) here */
+    if (dynrel.get_value() != "") {
+        std::string dr = dynrel.get_value();
+        const char *opt = dr.c_str();
+        char *end;
+
+        unsigned int addr;
+        while ((addr = strtoul(opt, &end, 10)) != 0) {
+            dr_printf("[dynrel] Tainting %p\n", addr);
+            drtaint_set_app_taint(drcontext, (app_pc)exe_start + addr,
+                                  TEXT_POINTER_TAINT);
+            opt = end + 1;
+        }
+    }
+    if (pltrel.get_value() != "") {
+        std::string dp = pltrel.get_value();
+        const char *opt = dp.c_str();
+        char *end;
+
+        unsigned int addr;
+        while ((addr = strtoul(opt, &end, 10)) != 0) {
+            dr_printf("[pltrel] Tainting %p\n", addr);
+            drtaint_set_app_taint(drcontext, (app_pc)exe_start + addr,
+                                  TEXT_POINTER_TAINT);
+            opt = end + 1;
+        }
     }
 }
 

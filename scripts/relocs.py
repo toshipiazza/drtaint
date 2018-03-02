@@ -16,4 +16,4 @@ with open(argv[1], 'r') as f:
         pltrel = map(itemgetter('r_offset'), sec.iter_relocations())
         pltrel = map(str, pltrel)
         pltrel = ":".join(pltrel)
-print("-with-dynrel={} -with-pltrel={}".format(dynrel, pltrel))
+print("-with_dynrel {} -with_pltrel {}".format(dynrel, pltrel))
