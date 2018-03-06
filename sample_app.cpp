@@ -83,15 +83,12 @@ static droption_t<std::string> dynrel
  "Taint all entries in dynrel (those entries in the .rel.dyn section) preemptively "
  "to mitigate intermodular reference leaks");
 
-/* TODO: pltrel should be tainted lazily if RELRO is off, or LD_BIND_NOW=1 is
- * unspecified however we do not support this mode of operation right now since
- * drwrap cannot easily hook __dl_runtime_resolve.
- */
 static droption_t<std::string> pltrel
 (DROPTION_SCOPE_CLIENT, "with_pltrel", "",
  "List of all entries in the .rel.plt section of the target binary",
  "Taint all entries in pltrel (those entries in the .rel.plt section) preemptively "
- "to mitigate intermodular reference leaks");
+ "to mitigate intermodular reference leaks; this should only be specified if RELRO "
+ "is enabled in the binary");
 
 typedef struct {
     /* {recv,read,uname} parameter */
@@ -196,7 +193,7 @@ event_app_instruction_start(void *drcontext, void *tag, instrlist_t *bb, instr_t
     /* Emit the following instrumentation:
      * ldr r0, [sp]
      * add r1, sp, #4
-     * add r2, r1, r0, LSL #2
+     * add r2, r1, r0, lsl #2
      * add r2, 4
      * call clean_call
      */
@@ -245,13 +242,13 @@ taint_stack_and_relocs(int argc, char *argv[], char *envp[])
     void *drcontext = dr_get_current_drcontext();
 
     /* taint argv on the stack */
-    dr_printf("[argv] Tainting argv\n");
+    dr_fprintf(STDERR, "[argv] Tainting argv\n");
     for (int i = 0; i < argc; ++i) {
         drtaint_set_app_taint(drcontext, (app_pc)argv+i,
                               STCK_POINTER_TAINT);
     }
     /* taint envp on the stack */
-    dr_printf("[envp] Tainting envp\n");
+    dr_fprintf(STDERR, "[envp] Tainting envp\n");
     for (int i = 0; envp[i]; ++i) {
         drtaint_set_app_taint(drcontext, (app_pc)envp+i,
                               STCK_POINTER_TAINT);
@@ -264,25 +261,30 @@ taint_stack_and_relocs(int argc, char *argv[], char *envp[])
         char *end;
 
         unsigned int addr;
+        dr_fprintf(STDERR, "[dynrel] Tainting dynrel\n");
         while ((addr = strtoul(opt, &end, 10)) != 0) {
-            dr_printf("[dynrel] Tainting %p\n", addr);
             drtaint_set_app_taint(drcontext, (app_pc)exe_start + addr,
                                   TEXT_POINTER_TAINT);
             opt = end + 1;
         }
     }
     if (pltrel.get_value() != "") {
+        /* RELRO is enabled; we must taint all pltrel entries pre-emptively */
         std::string dp = pltrel.get_value();
         const char *opt = dp.c_str();
         char *end;
 
         unsigned int addr;
+        dr_fprintf(STDERR, "[pltrel] Tainting pltrel\n");
         while ((addr = strtoul(opt, &end, 10)) != 0) {
-            dr_printf("[pltrel] Tainting %p\n", addr);
             drtaint_set_app_taint(drcontext, (app_pc)exe_start + addr,
                                   TEXT_POINTER_TAINT);
             opt = end + 1;
         }
+    } else {
+        DR_ASSERT_MSG(false,
+                "NYI, please specify `-Wl,-z,relro,-z,now` "
+                "or `LD_BIND_NOW=1`");
     }
 }
 
@@ -347,7 +349,24 @@ event_thread_context_exit(void *drcontext, bool thread_exit)
 static bool
 event_filter_syscall(void *drcontext, int sysnum)
 {
-    return true;
+    return
+        /* check these for taint */
+        sysnum == SYS_write      ||
+        sysnum == SYS_send       ||
+        /* taint return values */
+        sysnum == SYS_mmap2      ||
+        sysnum == SYS_brk        ||
+        /* clear taint written */
+        sysnum == SYS_recv       ||
+        sysnum == SYS_read       ||
+        sysnum == SYS_uname      ||
+        sysnum == SYS_lstat      ||
+        sysnum == SYS_lstat64    ||
+        sysnum == SYS_fstat      ||
+        sysnum == SYS_fstat64    ||
+        sysnum == SYS_stat       ||
+        sysnum == SYS_stat64     ||
+        sysnum == SYS_clock_gettime;
 }
 
 static bool
@@ -362,11 +381,12 @@ event_pre_syscall(void *drcontext, int sysnum)
             byte result;
             if (drtaint_get_app_taint(drcontext, (app_pc)&buffer[i],
                                       &result) && result != 0) {
-                dr_fprintf(STDERR, "Detected address leak\n");
+                dr_fprintf(STDERR, "[ASLR] Detected address leak\n");
                 /* fail the syscall to prevent the leak */
                 return false;
             }
         }
+        return true;
     }
 
     per_thread_t *data = (per_thread_t *)
@@ -418,52 +438,30 @@ event_post_syscall(void *drcontext, int sysnum)
     /* all other syscalls untaint rax */
     drtaint_set_reg_taint(drcontext, DR_REG_R0, 0);
 
+#define TAINT_SYSNUM(sysnum_check, bufsz)               \
+    if (sysnum == sysnum_check) {                       \
+        per_thread_t *data = (per_thread_t *)           \
+            drmgr_get_cls_field(drcontext, tcls_idx);   \
+        for (int i = 0; i < bufsz; ++i) {               \
+            if (!drtaint_set_app_taint(drcontext,       \
+                        (app_pc)data->buf + i, 0))      \
+                DR_ASSERT(false);                       \
+        }                                               \
+    }
+
     /* We need to clear taint on the field written
      * out by sysnum. All following syscalls do so.
      */
-    if (sysnum == SYS_recv || sysnum == SYS_read) {
-        per_thread_t *data = (per_thread_t *)
-            drmgr_get_cls_field(drcontext, tcls_idx);
-        for (int i = 0; i < info.value; ++i) {
-            if (!drtaint_set_app_taint(drcontext,
-                        (app_pc)data->buf + i, 0))
-                DR_ASSERT(false);
-        }
-    } else if (sysnum == SYS_uname) {
-        per_thread_t *data = (per_thread_t *)
-            drmgr_get_cls_field(drcontext, tcls_idx);
-        for (int i = 0; i < sizeof(utsname); ++i) {
-            if (!drtaint_set_app_taint(drcontext,
-                        (app_pc)data->buf + i, 0))
-                DR_ASSERT(false);
-        }
-    } else if (sysnum == SYS_lstat ||
-               sysnum == SYS_fstat ||
-               sysnum == SYS_stat) {
-        per_thread_t *data = (per_thread_t *)
-            drmgr_get_cls_field(drcontext, tcls_idx);
-        for (int i = 0; i < sizeof(struct stat); ++i) {
-            if (!drtaint_set_app_taint(drcontext,
-                        (app_pc)data->buf + i, 0))
-                DR_ASSERT(false);
-        }
-    } else if (sysnum == SYS_lstat64 ||
-               sysnum == SYS_fstat64 ||
-               sysnum == SYS_stat64) {
-        per_thread_t *data = (per_thread_t *)
-            drmgr_get_cls_field(drcontext, tcls_idx);
-        for (int i = 0; i < sizeof(struct stat64); ++i) {
-            if (!drtaint_set_app_taint(drcontext,
-                        (app_pc)data->buf + i, 0))
-                DR_ASSERT(false);
-        }
-    } else if (sysnum == SYS_clock_gettime) {
-        per_thread_t *data = (per_thread_t *)
-            drmgr_get_cls_field(drcontext, tcls_idx);
-        for (int i = 0; i < sizeof(struct timespec); ++i) {
-            if (!drtaint_set_app_taint(drcontext,
-                        (app_pc)data->buf + i, 0))
-                DR_ASSERT(false);
-        }
-    }
+    TAINT_SYSNUM(SYS_recv,    info.value);
+    TAINT_SYSNUM(SYS_read,    info.value);
+    TAINT_SYSNUM(SYS_uname,   sizeof(utsname));
+    TAINT_SYSNUM(SYS_lstat,   sizeof(struct stat));
+    TAINT_SYSNUM(SYS_fstat,   sizeof(struct stat));
+    TAINT_SYSNUM(SYS_stat,    sizeof(struct stat));
+    TAINT_SYSNUM(SYS_lstat64, sizeof(struct stat64));
+    TAINT_SYSNUM(SYS_fstat64, sizeof(struct stat64));
+    TAINT_SYSNUM(SYS_stat64,  sizeof(struct stat64));
+    TAINT_SYSNUM(SYS_clock_gettime, sizeof(struct timespec));
+    /* TODO: this is definitely not an exhaustive list */
+#undef TAINT_SYSNUM
 }

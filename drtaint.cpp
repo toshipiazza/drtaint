@@ -1137,6 +1137,7 @@ event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *w
     case OP_eor:
     case OP_eors:
     case OP_mul:
+    case OP_muls:
     case OP_orr:
     case OP_ror:
     case OP_orrs:
@@ -1165,6 +1166,7 @@ event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *w
             DR_ASSERT(false); /* add reg, imm, imm does not make sense */
         break;
 
+    case OP_smull:
     case OP_umull:
         propagate_umull(drcontext, tag, ilist, where);
         break;
