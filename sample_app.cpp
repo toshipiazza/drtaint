@@ -69,7 +69,7 @@ event_app_instruction_pc(void *drcontext, void *tag, instrlist_t *bb, instr_t *i
                            bool for_trace, bool translating, void *user_data);
 
 static void
-taint_stack_and_relocs(int argc, char *argv[], char *envp[]);
+taint_stack(int argc, char *argv[], char *envp[]);
 
 static droption_t<bool> dump_taint_on_exit
 (DROPTION_SCOPE_CLIENT, "dump_taint_on_exit", false,
@@ -77,6 +77,7 @@ static droption_t<bool> dump_taint_on_exit
  "On exit of app, dump taint profile that can be parsed into a bitmap by vis.py "
  "to visualize taint introduced via the taint source API");
 
+#if 0
 static droption_t<std::string> dynrel
 (DROPTION_SCOPE_CLIENT, "with_dynrel", "",
  "List of all entries in the .rel.dyn section of the target binary",
@@ -89,6 +90,7 @@ static droption_t<std::string> pltrel
  "Taint all entries in pltrel (those entries in the .rel.plt section) preemptively "
  "to mitigate intermodular reference leaks; this should only be specified if RELRO "
  "is enabled in the binary");
+#endif
 
 typedef struct {
     /* {recv,read,uname} parameter */
@@ -223,7 +225,7 @@ event_app_instruction_start(void *drcontext, void *tag, instrlist_t *bb, instr_t
              opnd_create_reg(envp),
              OPND_CREATE_INT(4)));
     dr_insert_clean_call(drcontext, bb, instr,
-                         (void *)taint_stack_and_relocs,
+                         (void *)taint_stack,
                          false, 3,
                          opnd_create_reg(argc),
                          opnd_create_reg(argv),
@@ -237,7 +239,7 @@ event_app_instruction_start(void *drcontext, void *tag, instrlist_t *bb, instr_t
 }
 
 static void
-taint_stack_and_relocs(int argc, char *argv[], char *envp[])
+taint_stack(int argc, char *argv[], char *envp[])
 {
     void *drcontext = dr_get_current_drcontext();
 
@@ -254,6 +256,7 @@ taint_stack_and_relocs(int argc, char *argv[], char *envp[])
                               STCK_POINTER_TAINT);
     }
 
+#if 0
     /* we also taint the GOT (.dyn.rel and .dyn.plt sections) here */
     if (dynrel.get_value() != "") {
         std::string dr = dynrel.get_value();
@@ -286,6 +289,7 @@ taint_stack_and_relocs(int argc, char *argv[], char *envp[])
                 "NYI, please specify `-Wl,-z,relro,-z,now` "
                 "or `LD_BIND_NOW=1`");
     }
+#endif
 }
 
 /****************************************************************************
