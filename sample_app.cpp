@@ -77,21 +77,6 @@ static droption_t<bool> dump_taint_on_exit
  "On exit of app, dump taint profile that can be parsed into a bitmap by vis.py "
  "to visualize taint introduced via the taint source API");
 
-#if 0
-static droption_t<std::string> dynrel
-(DROPTION_SCOPE_CLIENT, "with_dynrel", "",
- "List of all entries in the .rel.dyn section of the target binary",
- "Taint all entries in dynrel (those entries in the .rel.dyn section) preemptively "
- "to mitigate intermodular reference leaks");
-
-static droption_t<std::string> pltrel
-(DROPTION_SCOPE_CLIENT, "with_pltrel", "",
- "List of all entries in the .rel.plt section of the target binary",
- "Taint all entries in pltrel (those entries in the .rel.plt section) preemptively "
- "to mitigate intermodular reference leaks; this should only be specified if RELRO "
- "is enabled in the binary");
-#endif
-
 typedef struct {
     /* {recv,read,uname} parameter */
     char  *buf;
@@ -255,41 +240,6 @@ taint_stack(int argc, char *argv[], char *envp[])
         drtaint_set_app_taint(drcontext, (app_pc)envp+i,
                               STCK_POINTER_TAINT);
     }
-
-#if 0
-    /* we also taint the GOT (.dyn.rel and .dyn.plt sections) here */
-    if (dynrel.get_value() != "") {
-        std::string dr = dynrel.get_value();
-        const char *opt = dr.c_str();
-        char *end;
-
-        unsigned int addr;
-        dr_fprintf(STDERR, "[dynrel] Tainting dynrel\n");
-        while ((addr = strtoul(opt, &end, 10)) != 0) {
-            drtaint_set_app_taint(drcontext, (app_pc)exe_start + addr,
-                                  TEXT_POINTER_TAINT);
-            opt = end + 1;
-        }
-    }
-    if (pltrel.get_value() != "") {
-        /* RELRO is enabled; we must taint all pltrel entries pre-emptively */
-        std::string dp = pltrel.get_value();
-        const char *opt = dp.c_str();
-        char *end;
-
-        unsigned int addr;
-        dr_fprintf(STDERR, "[pltrel] Tainting pltrel\n");
-        while ((addr = strtoul(opt, &end, 10)) != 0) {
-            drtaint_set_app_taint(drcontext, (app_pc)exe_start + addr,
-                                  TEXT_POINTER_TAINT);
-            opt = end + 1;
-        }
-    } else {
-        DR_ASSERT_MSG(false,
-                "NYI, please specify `-Wl,-z,relro,-z,now` "
-                "or `LD_BIND_NOW=1`");
-    }
-#endif
 }
 
 /****************************************************************************
@@ -370,6 +320,8 @@ event_filter_syscall(void *drcontext, int sysnum)
         sysnum == SYS_fstat64    ||
         sysnum == SYS_stat       ||
         sysnum == SYS_stat64     ||
+        sysnum == SYS_statfs     ||
+        sysnum == SYS_statfs64   ||
         sysnum == SYS_clock_gettime;
 }
 
@@ -386,8 +338,8 @@ event_pre_syscall(void *drcontext, int sysnum)
             if (drtaint_get_app_taint(drcontext, (app_pc)&buffer[i],
                                       &result) && result != 0) {
                 dr_fprintf(STDERR, "[ASLR] Detected address leak\n");
-                /* fail the syscall to prevent the leak */
-                return false;
+                /* TODO: fail the syscall to prevent the leak */
+                return true;
             }
         }
         return true;
@@ -409,6 +361,8 @@ event_pre_syscall(void *drcontext, int sysnum)
                sysnum == SYS_fstat64 ||
                sysnum == SYS_stat ||
                sysnum == SYS_stat64 ||
+               sysnum == SYS_statfs ||
+               sysnum == SYS_statfs64 ||
                sysnum == SYS_clock_gettime) {
         /* Save this information for later, so we can handle these
          * syscalls *only* if they didn't fail.
@@ -456,15 +410,17 @@ event_post_syscall(void *drcontext, int sysnum)
     /* We need to clear taint on the field written
      * out by sysnum. All following syscalls do so.
      */
-    TAINT_SYSNUM(SYS_recv,    info.value);
-    TAINT_SYSNUM(SYS_read,    info.value);
-    TAINT_SYSNUM(SYS_uname,   sizeof(utsname));
-    TAINT_SYSNUM(SYS_lstat,   sizeof(struct stat));
-    TAINT_SYSNUM(SYS_fstat,   sizeof(struct stat));
-    TAINT_SYSNUM(SYS_stat,    sizeof(struct stat));
-    TAINT_SYSNUM(SYS_lstat64, sizeof(struct stat64));
-    TAINT_SYSNUM(SYS_fstat64, sizeof(struct stat64));
-    TAINT_SYSNUM(SYS_stat64,  sizeof(struct stat64));
+    TAINT_SYSNUM(SYS_recv,      info.value);
+    TAINT_SYSNUM(SYS_read,      info.value);
+    TAINT_SYSNUM(SYS_uname,     sizeof(utsname));
+    TAINT_SYSNUM(SYS_lstat,     sizeof(struct stat));
+    TAINT_SYSNUM(SYS_fstat,     sizeof(struct stat));
+    TAINT_SYSNUM(SYS_stat,      sizeof(struct stat));
+    TAINT_SYSNUM(SYS_statfs,    sizeof(struct stat));
+    TAINT_SYSNUM(SYS_lstat64,   sizeof(struct stat64));
+    TAINT_SYSNUM(SYS_fstat64,   sizeof(struct stat64));
+    TAINT_SYSNUM(SYS_stat64,    sizeof(struct stat64));
+    TAINT_SYSNUM(SYS_statfs64,  sizeof(struct stat64));
     TAINT_SYSNUM(SYS_clock_gettime, sizeof(struct timespec));
     /* TODO: this is definitely not an exhaustive list */
 #undef TAINT_SYSNUM

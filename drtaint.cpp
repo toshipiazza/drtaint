@@ -1086,6 +1086,8 @@ event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *w
     case OP_movw:
     case OP_movt:
     case OP_movs:
+    case OP_rrx:
+    case OP_rrxs:
         if (opnd_is_reg(instr_get_src(where, 0)))
             propagate_mov_reg_src(drcontext, tag, ilist, where);
         else
