@@ -947,6 +947,50 @@ instr_is_simd(instr_t *where)
     }
 }
 
+typedef enum {
+    DB, /* stmdb matches w/ ldmia */
+    IA,
+    IB, /* stmib matches w/ ldmda */
+    DA
+} stack_dir_t;
+
+stack_dir_t
+opcode2dir(int opcode)
+{
+    if (opcode == OP_stmia ||
+        opcode == OP_ldmia)
+        return IA;
+    if (opcode == OP_stmdb ||
+        opcode == OP_ldmdb)
+        return DB;
+    if (opcode == OP_stmib ||
+        opcode == OP_ldmib)
+        return IB;
+    DR_ASSERT(opcode == OP_stmda ||
+              opcode == OP_ldmda);
+    return DA;
+}
+
+app_pc
+calculate_addr(instr_t *instr, void *base, int i)
+{
+    int top = instr_num_dsts(instr) == 2 ?
+        instr_num_srcs(instr) :
+        instr_num_srcs(instr) - 1;
+    switch (opcode2dir(instr_get_opcode(instr))) {
+    case DB:
+        return (app_pc)base - 4*(top - i - 1);
+    case IA:
+        return (app_pc)base + 4*i;
+    
+    /* XXX: these are probably not correct */
+    case DA:
+        return (app_pc)base - 4*i;
+    case IB:
+        return (app_pc)base + 4*(top - i - 1);
+    }
+}
+
 static void
 propagate_ldm_cc(void *pc)
 {
@@ -954,11 +998,6 @@ propagate_ldm_cc(void *pc)
     instr_t *instr = instr_create(drcontext);
 
     decode(drcontext, (byte *)pc, instr);
-    DR_ASSERT(instr_get_opcode(instr) == OP_ldm);
-    if (instr_get_opcode(instr) != OP_ldm) {
-        instr_destroy(drcontext, instr);
-        return;
-    }
 
     /* get the base register */
     dr_mcontext_t mcontext = {sizeof(mcontext),DR_MC_ALL,};
@@ -972,11 +1011,9 @@ propagate_ldm_cc(void *pc)
             (opnd_get_reg(instr_get_dst(instr, i)) ==
              opnd_get_reg(instr_get_src(instr, 1))))
             break;
-        /* Set taint from stack to the
-         * appropriate register.
-         */
+        /* set taint from stack to the appropriate register */
         byte res;
-        ok = drtaint_get_app_taint(drcontext, (app_pc)base + 4*i, &res);
+        ok = drtaint_get_app_taint(drcontext, calculate_addr(instr, base, i), &res);
         DR_ASSERT(ok);
         ok = drtaint_set_reg_taint(drcontext, opnd_get_reg(instr_get_dst(instr, i)), res);
         DR_ASSERT(ok);
@@ -991,15 +1028,6 @@ propagate_stm_cc(void *pc)
     instr_t *instr = instr_create(drcontext);
 
     decode(drcontext, (byte *)pc, instr);
-    DR_ASSERT(instr_get_opcode(instr) == OP_stmdb ||
-              instr_get_opcode(instr) == OP_stm);
-    if (instr_get_opcode(instr) != OP_stmdb &&
-        instr_get_opcode(instr) != OP_stm) {
-        instr_destroy(drcontext, instr);
-        return;
-    }
-
-    bool down = instr_get_opcode(instr) == OP_stmdb;
 
     /* get the base reg */
     dr_mcontext_t mcontext = {sizeof(mcontext),DR_MC_ALL,};
@@ -1017,12 +1045,7 @@ propagate_stm_cc(void *pc)
         byte res;
         ok = drtaint_get_reg_taint(drcontext, opnd_get_reg(instr_get_src(instr, i)), &res);
         DR_ASSERT(ok);
-        int top = instr_num_dsts(instr) == 2 ?
-            instr_num_srcs(instr) :
-            instr_num_srcs(instr) - 1;
-        app_pc addr = down ? (app_pc)base - 4*(top-i-1)
-                           : (app_pc)base + 4*i;
-        ok = drtaint_set_app_taint(drcontext, addr, res);
+        ok = drtaint_set_app_taint(drcontext, calculate_addr(instr, base, i), res);
         DR_ASSERT(ok);
     }
     instr_destroy(drcontext, instr);
@@ -1053,12 +1076,17 @@ event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *w
         return DR_EMIT_DEFAULT;
     }
     switch (instr_get_opcode(where)) {
-    case OP_ldm:
+    case OP_ldmia:
+    case OP_ldmdb:
+    case OP_ldmib:
+    case OP_ldmda:
         propagate_ldm(drcontext, tag, ilist, where);
         break;
 
-    case OP_stm:
+    case OP_stmia:
     case OP_stmdb:
+    case OP_stmib:
+    case OP_stmda:
         propagate_stm(drcontext, tag, ilist, where);
         break;
 
@@ -1066,9 +1094,12 @@ event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *w
     case OP_ldrb:
     case OP_ldrd:
     case OP_ldrh:
+    case OP_ldrsh:
+    case OP_ldrsb:
     case OP_ldrex:
         propagate_ldr(drcontext, tag, ilist, where);
         break;
+
     case OP_str:
     case OP_strb:
     case OP_strd:

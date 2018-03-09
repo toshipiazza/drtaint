@@ -337,8 +337,8 @@ event_pre_syscall(void *drcontext, int sysnum)
             byte result;
             if (drtaint_get_app_taint(drcontext, (app_pc)&buffer[i],
                                       &result) && result != 0) {
-                dr_fprintf(STDERR, "[ASLR] Detected address leak\n");
                 /* TODO: fail the syscall to prevent the leak */
+                dr_fprintf(STDERR, "[ASLR] Detected address leak\n");
                 return true;
             }
         }
