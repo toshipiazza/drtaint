@@ -5,18 +5,30 @@ set(DynamoRIO_DIR         /home/piazzt/SD/Build/dynamorio/exports/cmake)
 set(DrMemoryFramework_DIR /home/piazzt/install/exports32/drmf)
 
 set(CMAKE_CXX_STANDARD 11)
-add_library(drtaint SHARED
+add_library(draslrharden SHARED
   sample_app.cpp
+  drtaint.cpp
+  drtaint_shadow.c
+  drtaint_helper.cpp
+  utils.c)
+add_library(drtaint SHARED
+  sample_app2.cpp
   drtaint.cpp
   drtaint_shadow.c
   drtaint_helper.cpp
   utils.c)
 find_package(DynamoRIO REQUIRED)
 find_package(DrMemoryFramework REQUIRED)
+configure_DynamoRIO_client(draslrharden)
+use_DynamoRIO_extension(draslrharden "drreg")
+use_DynamoRIO_extension(draslrharden "drmgr")
+use_DynamoRIO_extension(draslrharden "umbra")
+use_DynamoRIO_extension(draslrharden "drutil")
+use_DynamoRIO_extension(draslrharden "drx")
+use_DynamoRIO_extension(draslrharden "droption")
 configure_DynamoRIO_client(drtaint)
 use_DynamoRIO_extension(drtaint "drreg")
 use_DynamoRIO_extension(drtaint "drmgr")
 use_DynamoRIO_extension(drtaint "umbra")
 use_DynamoRIO_extension(drtaint "drutil")
 use_DynamoRIO_extension(drtaint "drx")
-use_DynamoRIO_extension(drtaint "droption")

@@ -25,13 +25,13 @@ void
 unimplemented_opcode(instr_t *where)
 {
     int opcode = instr_get_opcode(where);
-    if (seen.find(opcode) == std::end(seen)) {
-        seen.insert(opcode);
+    /* if (seen.find(opcode) == std::end(seen)) { */
+    /*     seen.insert(opcode); */
         std::cerr << "Opcode '"
                   << decode_opcode_name(opcode)
                   << "' NYI"
                   << std::endl;
-    }
+    /* } */
 }
 
 void

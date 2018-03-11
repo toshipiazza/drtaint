@@ -6,9 +6,13 @@
 #include "drtaint_helper.h"
 
 #include <iostream>
+#include <unistd.h>
+#include <asm-generic/ioctls.h>
 #include <sys/utsname.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <syscall.h>
+#include <termios.h>
 #include <time.h>
 
 /* This sample tries to prevent address leaks in an active exploitation
@@ -80,6 +84,7 @@ static droption_t<bool> dump_taint_on_exit
 typedef struct {
     /* {recv,read,uname} parameter */
     char  *buf;
+    char  *buf2;
 } per_thread_t;
 
 static app_pc exe_start;
@@ -256,8 +261,8 @@ event_app_instruction_pc(void *drcontext, void *tag, instrlist_t *bb, instr_t *i
     /* If PC is read, we taint it so that the following app instruction spreads its
      * taint accordingly.
      * TODO: for performance, instead of tainting PC, we should taint the destination
-     * operand directly, and only if this was an arithmetic or data movement
-     * instruction at that.
+     * operand directly, and only if this was an arithmetic or data movement instru at
+     * that.
      */
     for (i = 0; i < instr_num_srcs(instr); ++i) {
         should_taint |= opnd_uses_reg(
@@ -303,26 +308,7 @@ event_thread_context_exit(void *drcontext, bool thread_exit)
 static bool
 event_filter_syscall(void *drcontext, int sysnum)
 {
-    return
-        /* check these for taint */
-        sysnum == SYS_write      ||
-        sysnum == SYS_send       ||
-        /* taint return values */
-        sysnum == SYS_mmap2      ||
-        sysnum == SYS_brk        ||
-        /* clear taint written */
-        sysnum == SYS_recv       ||
-        sysnum == SYS_read       ||
-        sysnum == SYS_uname      ||
-        sysnum == SYS_lstat      ||
-        sysnum == SYS_lstat64    ||
-        sysnum == SYS_fstat      ||
-        sysnum == SYS_fstat64    ||
-        sysnum == SYS_stat       ||
-        sysnum == SYS_stat64     ||
-        sysnum == SYS_statfs     ||
-        sysnum == SYS_statfs64   ||
-        sysnum == SYS_clock_gettime;
+    return true;
 }
 
 static bool
@@ -338,7 +324,7 @@ event_pre_syscall(void *drcontext, int sysnum)
             if (drtaint_get_app_taint(drcontext, (app_pc)&buffer[i],
                                       &result) && result != 0) {
                 /* TODO: fail the syscall to prevent the leak */
-                dr_fprintf(STDERR, "[ASLR] Detected address leak\n");
+                dr_printf("[ASLR] Detected address leak\n");
                 return true;
             }
         }
@@ -368,6 +354,9 @@ event_pre_syscall(void *drcontext, int sysnum)
          * syscalls *only* if they didn't fail.
          */
         data->buf = (char *)dr_syscall_get_param(drcontext, 1);
+    } else if (sysnum == SYS_gettimeofday) {
+        data->buf  = (char *)dr_syscall_get_param(drcontext, 0);
+        data->buf2 = (char *)dr_syscall_get_param(drcontext, 1);
     }
 
     return true;
@@ -378,6 +367,9 @@ event_post_syscall(void *drcontext, int sysnum)
 {
     dr_syscall_result_info_t info = { sizeof(info), };
     dr_syscall_get_result_ex(drcontext, &info);
+
+    /* all syscalls untaint rax (except mmap2, brk, etc) */
+    drtaint_set_reg_taint(drcontext, DR_REG_R0, 0);
 
     if (!info.succeeded) {
         /* We only care about tainting if the syscall
@@ -393,9 +385,6 @@ event_post_syscall(void *drcontext, int sysnum)
         return;
     }
 
-    /* all other syscalls untaint rax */
-    drtaint_set_reg_taint(drcontext, DR_REG_R0, 0);
-
 #define TAINT_SYSNUM(sysnum_check, bufsz)               \
     if (sysnum == sysnum_check) {                       \
         per_thread_t *data = (per_thread_t *)           \
@@ -406,7 +395,6 @@ event_post_syscall(void *drcontext, int sysnum)
                 DR_ASSERT(false);                       \
         }                                               \
     }
-
     /* We need to clear taint on the field written
      * out by sysnum. All following syscalls do so.
      */
@@ -422,6 +410,22 @@ event_post_syscall(void *drcontext, int sysnum)
     TAINT_SYSNUM(SYS_stat64,    sizeof(struct stat64));
     TAINT_SYSNUM(SYS_statfs64,  sizeof(struct stat64));
     TAINT_SYSNUM(SYS_clock_gettime, sizeof(struct timespec));
-    /* TODO: this is definitely not an exhaustive list */
 #undef TAINT_SYSNUM
+
+    /* gettimeofday has two arguments */
+    if (sysnum == SYS_gettimeofday) {
+        per_thread_t *data = (per_thread_t *)
+            drmgr_get_cls_field(drcontext, tcls_idx);
+        for (int i = 0; i < sizeof(struct timeval); ++i) {
+            if (!drtaint_set_app_taint(drcontext,
+                        (app_pc)data->buf  + i, 0))
+                DR_ASSERT(false);
+        }
+        for (int i = 0; i < sizeof(struct timezone); ++i) {
+            if (!drtaint_set_app_taint(drcontext,
+                        (app_pc)data->buf2 + i, 0))
+                DR_ASSERT(false);
+        }
+    }
+    /* TODO: this is definitely not an exhaustive list */
 }

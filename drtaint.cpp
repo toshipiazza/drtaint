@@ -982,7 +982,7 @@ calculate_addr(instr_t *instr, void *base, int i)
         return (app_pc)base - 4*(top - i - 1);
     case IA:
         return (app_pc)base + 4*i;
-    
+
     /* XXX: these are probably not correct */
     case DA:
         return (app_pc)base - 4*i;
