@@ -947,73 +947,56 @@ instr_is_simd(instr_t *where)
     }
 }
 
-typedef enum {
-    DB, /* stmdb matches w/ ldmia */
-    IA,
-    IB, /* stmib matches w/ ldmda */
-    DA
-} stack_dir_t;
+typedef enum { DB, IA, DA, IB } stack_dir_t;
 
-stack_dir_t
-opcode2dir(int opcode)
-{
-    if (opcode == OP_stmia ||
-        opcode == OP_ldmia)
-        return IA;
-    if (opcode == OP_stmdb ||
-        opcode == OP_ldmdb)
-        return DB;
-    if (opcode == OP_stmib ||
-        opcode == OP_ldmib)
-        return IB;
-    DR_ASSERT(opcode == OP_stmda ||
-              opcode == OP_ldmda);
-    return DA;
-}
-
-app_pc
-calculate_addr(instr_t *instr, void *base, int i)
-{
-    int top = instr_num_dsts(instr) == 2 ?
-        instr_num_srcs(instr) :
-        instr_num_srcs(instr) - 1;
-    switch (opcode2dir(instr_get_opcode(instr))) {
-    case DB:
+template <stack_dir_t T>
+struct addr_calculator {
+    app_pc addr(instr_t *instr, void *base, int i) {
+        DR_ASSERT_MSG(false, "Unreachable");
+    } };
+template<> struct addr_calculator<DB> {
+    app_pc addr(instr_t *instr, void *base, int i) {
+        int top = instr_num_dsts(instr) == 2 ?
+            instr_num_srcs(instr) :
+            instr_num_srcs(instr) - 1;
         return (app_pc)base - 4*(top - i - 1);
-    case IA:
+    } };
+template<> struct addr_calculator<IA> {
+    app_pc addr(instr_t *instr, void *base, int i) {
         return (app_pc)base + 4*i;
-
-    /* XXX: these are probably not correct */
-    case DA:
+    } };
+/* XXX: these are probably not correct */
+template<> struct addr_calculator<DA> {
+    app_pc addr(instr_t *instr, void *base, int i) {
         return (app_pc)base - 4*i;
-    case IB:
+    } };
+template<> struct addr_calculator<IB> {
+    app_pc addr(instr_t *instr, void *base, int i) {
+        int top = instr_num_dsts(instr) == 2 ?
+            instr_num_srcs(instr) :
+            instr_num_srcs(instr) - 1;
         return (app_pc)base + 4*(top - i - 1);
-    }
-}
+    } };
 
-static void
-propagate_ldm_cc(void *pc)
+template <stack_dir_t c> void
+propagate_ldm_cc_template(void *pc, void *base, bool writeback)
 {
     void *drcontext = dr_get_current_drcontext();
     instr_t *instr = instr_create(drcontext);
 
     decode(drcontext, (byte *)pc, instr);
 
-    /* get the base register */
-    dr_mcontext_t mcontext = {sizeof(mcontext),DR_MC_ALL,};
-    dr_get_mcontext(drcontext, &mcontext);
-    void *base = (void *)reg_get_value(opnd_get_base(instr_get_src(instr, 0)), &mcontext);
-
     for (int i = 0; i < instr_num_dsts(instr); ++i) {
         bool ok;
         /* this indicates a writeback */
-        if (instr_num_srcs(instr) == 2 &&
+        if (writeback &&
             (opnd_get_reg(instr_get_dst(instr, i)) ==
              opnd_get_reg(instr_get_src(instr, 1))))
             break;
         /* set taint from stack to the appropriate register */
         byte res;
-        ok = drtaint_get_app_taint(drcontext, calculate_addr(instr, base, i), &res);
+        auto calc = addr_calculator<c> { };
+        ok = drtaint_get_app_taint(drcontext, calc.addr(instr, base, i), &res);
         DR_ASSERT(ok);
         ok = drtaint_set_reg_taint(drcontext, opnd_get_reg(instr_get_dst(instr, i)), res);
         DR_ASSERT(ok);
@@ -1021,23 +1004,17 @@ propagate_ldm_cc(void *pc)
     instr_destroy(drcontext, instr);
 }
 
-static void
-propagate_stm_cc(void *pc)
+template <stack_dir_t c> void
+propagate_stm_cc_template(void *pc, void *base, bool writeback)
 {
     void *drcontext = dr_get_current_drcontext();
     instr_t *instr = instr_create(drcontext);
 
     decode(drcontext, (byte *)pc, instr);
 
-    /* get the base reg */
-    dr_mcontext_t mcontext = {sizeof(mcontext),DR_MC_ALL,};
-    dr_get_mcontext(drcontext, &mcontext);
-    void *base = (void *)reg_get_value(opnd_get_base(instr_get_dst(instr, 0)), &mcontext);
-
     for (int i = 0; i < instr_num_srcs(instr); ++i) {
         bool ok;
-        /* this indicates a writeback */
-        if (instr_num_dsts(instr) == 2 &&
+        if (writeback &&
             (opnd_get_reg(instr_get_src(instr, i)) ==
              opnd_get_reg(instr_get_dst(instr, 1))))
             break;
@@ -1045,26 +1022,11 @@ propagate_stm_cc(void *pc)
         byte res;
         ok = drtaint_get_reg_taint(drcontext, opnd_get_reg(instr_get_src(instr, i)), &res);
         DR_ASSERT(ok);
-        ok = drtaint_set_app_taint(drcontext, calculate_addr(instr, base, i), res);
+        auto calc = addr_calculator<c> { };
+        ok = drtaint_set_app_taint(drcontext, calc.addr(instr, base, i), res);
         DR_ASSERT(ok);
     }
     instr_destroy(drcontext, instr);
-}
-
-static void
-propagate_ldm(void *drcontext, void *tag, instrlist_t *ilist, instr_t *where)
-{
-    app_pc pc = instr_get_app_pc(where);
-    dr_insert_clean_call(drcontext, ilist, where, (void *)propagate_ldm_cc,
-                         false, 1, OPND_CREATE_INTPTR(pc));
-}
-
-static void
-propagate_stm(void *drcontext, void *tag, instrlist_t *ilist, instr_t *where)
-{
-    app_pc pc = instr_get_app_pc(where);
-    dr_insert_clean_call(drcontext, ilist, where, (void *)propagate_stm_cc,
-                         false, 1, OPND_CREATE_INTPTR(pc));
 }
 
 static dr_emit_flags_t
@@ -1077,17 +1039,60 @@ event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *w
     }
     switch (instr_get_opcode(where)) {
     case OP_ldmia:
-    case OP_ldmdb:
-    case OP_ldmib:
-    case OP_ldmda:
-        propagate_ldm(drcontext, tag, ilist, where);
+        dr_insert_clean_call(drcontext, ilist, where, (void *)propagate_ldm_cc_template<IA>,
+                             false, 3, OPND_CREATE_INTPTR(instr_get_app_pc(where)),
+                                       opnd_create_reg(opnd_get_base(instr_get_src(where, 0))),
+                                       /* writeback */
+                                       OPND_CREATE_INT8(instr_num_srcs(where) > 1));
         break;
-
+    case OP_ldmdb:
+        dr_insert_clean_call(drcontext, ilist, where, (void *)propagate_ldm_cc_template<DB>,
+                             false, 3, OPND_CREATE_INTPTR(instr_get_app_pc(where)),
+                                       opnd_create_reg(opnd_get_base(instr_get_src(where, 0))),
+                                       /* writeback */
+                                       OPND_CREATE_INT8(instr_num_srcs(where) > 1));
+        break;
+    case OP_ldmib:
+        dr_insert_clean_call(drcontext, ilist, where, (void *)propagate_ldm_cc_template<IB>,
+                             false, 3, OPND_CREATE_INTPTR(instr_get_app_pc(where)),
+                                       opnd_create_reg(opnd_get_base(instr_get_src(where, 0))),
+                                       /* writeback */
+                                       OPND_CREATE_INT8(instr_num_srcs(where) > 1));
+        break;
+    case OP_ldmda:
+        dr_insert_clean_call(drcontext, ilist, where, (void *)propagate_ldm_cc_template<DA>,
+                             false, 3, OPND_CREATE_INTPTR(instr_get_app_pc(where)),
+                                       opnd_create_reg(opnd_get_base(instr_get_src(where, 0))),
+                                       /* writeback */
+                                       OPND_CREATE_INT8(instr_num_srcs(where) > 1));
+        break;
     case OP_stmia:
+        dr_insert_clean_call(drcontext, ilist, where, (void *)propagate_stm_cc_template<IA>,
+                             false, 3, OPND_CREATE_INTPTR(instr_get_app_pc(where)),
+                                       opnd_create_reg(opnd_get_base(instr_get_dst(where, 0))),
+                                       /* writeback */
+                                       OPND_CREATE_INT8(instr_num_dsts(where) > 1));
+        break;
     case OP_stmdb:
+        dr_insert_clean_call(drcontext, ilist, where, (void *)propagate_stm_cc_template<DB>,
+                             false, 3, OPND_CREATE_INTPTR(instr_get_app_pc(where)),
+                                       opnd_create_reg(opnd_get_base(instr_get_dst(where, 0))),
+                                       /* writeback */
+                                       OPND_CREATE_INT8(instr_num_dsts(where) > 1));
+        break;
     case OP_stmib:
+        dr_insert_clean_call(drcontext, ilist, where, (void *)propagate_stm_cc_template<IB>,
+                             false, 3, OPND_CREATE_INTPTR(instr_get_app_pc(where)),
+                                       opnd_create_reg(opnd_get_base(instr_get_dst(where, 0))),
+                                       /* writeback */
+                                       OPND_CREATE_INT8(instr_num_dsts(where) > 1));
+        break;
     case OP_stmda:
-        propagate_stm(drcontext, tag, ilist, where);
+        dr_insert_clean_call(drcontext, ilist, where, (void *)propagate_stm_cc_template<DA>,
+                             false, 3, OPND_CREATE_INTPTR(instr_get_app_pc(where)),
+                                       opnd_create_reg(opnd_get_base(instr_get_dst(where, 0))),
+                                       /* writeback */
+                                       OPND_CREATE_INT8(instr_num_dsts(where) > 1));
         break;
 
     case OP_ldr:

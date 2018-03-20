@@ -1,9 +1,11 @@
 #include "dr_api.h"
 #include "drmgr.h"
 #include "drreg.h"
-#include "drtaint.h"
 #include "droption.h"
-#include "drtaint_helper.h"
+
+#include "../drtaint.h"
+#include "../drtaint_helper.h"
+#include "../utils.h"
 
 #include <iostream>
 #include <unistd.h>
@@ -22,17 +24,10 @@
  *
  * - all stck addresses are relative to SP, and argv/envp
  * - all heap addresses are relative to `brk` or `mmap2` syscalls
- * - libc leaks occur through the dyn.plt or dyn.rel sections; we can taint them
- *   up front assuming LD_BIND_NOW=1
- * - other .text leaks occur when PC is used as an operand to some arithmetic or
- *   data movement instruction
- *
- * We also consider exposing an annotations library (TODO); if one wishes to
- * modify libc, i.e. to taint `__stack_chk_guard` (stack cookie) or to taint
- * `__pointer_chk_guard` (pointer encryption)
- *
- * TODO: we still have to handle periodic failures in coreutils because syscalls
- * (i.e. uname) write out to a buffer. We need to clear taint for these buffers.
+ * - code leaks come in .text and libc leaks
+ *   - .text leaks occur when PC is used as an operand
+ *   - libc leaks occur via relocations to the GOT
+ *     - mmap2 is used to load libraries
  */
 
 #define STCK_POINTER_TAINT 0x41
@@ -80,6 +75,12 @@ static droption_t<bool> dump_taint_on_exit
  "Dump taint profile to file on exit",
  "On exit of app, dump taint profile that can be parsed into a bitmap by vis.py "
  "to visualize taint introduced via the taint source API");
+
+static droption_t<bool> fail_address_leaks
+(DROPTION_SCOPE_CLIENT, "fail_address_leaks", false,
+ "Fail all address leaks",
+ "If an address leak is about to occur, i.e. via send() or write() system calls,"
+ "fail the leaky system call to prevent the leak");
 
 typedef struct {
     /* {recv,read,uname} parameter */
@@ -258,11 +259,8 @@ event_app_instruction_pc(void *drcontext, void *tag, instrlist_t *bb, instr_t *i
     int i;
     bool should_taint = false;
 
-    /* If PC is read, we taint it so that the following app instruction spreads its
-     * taint accordingly.
-     * TODO: for performance, instead of tainting PC, we should taint the destination
-     * operand directly, and only if this was an arithmetic or data movement instru at
-     * that.
+    /* If PC is read, we taint it so that the following app instruction
+     * spreads its taint accordingly.
      */
     for (i = 0; i < instr_num_srcs(instr); ++i) {
         should_taint |= opnd_uses_reg(
@@ -323,9 +321,8 @@ event_pre_syscall(void *drcontext, int sysnum)
             byte result;
             if (drtaint_get_app_taint(drcontext, (app_pc)&buffer[i],
                                       &result) && result != 0) {
-                /* TODO: fail the syscall to prevent the leak */
-                dr_printf("[ASLR] Detected address leak\n");
-                return true;
+                dr_fprintf(STDERR, "[ASLR] Address leak\n");
+                return !fail_address_leaks.get_value();
             }
         }
         return true;

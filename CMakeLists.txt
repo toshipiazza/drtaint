@@ -6,13 +6,13 @@ set(DrMemoryFramework_DIR /home/piazzt/install/exports32/drmf)
 
 set(CMAKE_CXX_STANDARD 11)
 add_library(draslrharden SHARED
-  sample_app.cpp
+  app/draslrharden.cpp
   drtaint.cpp
   drtaint_shadow.c
   drtaint_helper.cpp
   utils.c)
 add_library(drtaint SHARED
-  sample_app2.cpp
+  app/drtaint_only.cpp
   drtaint.cpp
   drtaint_shadow.c
   drtaint_helper.cpp
