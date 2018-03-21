@@ -1,19 +1,23 @@
 #include "dr_api.h"
 #include "drmgr.h"
-#include "umbra.h"
 #include "drreg.h"
 #include "drutil.h"
+
+#include "umbra.h"
+#include "drsyscall.h"
 #include "drtaint.h"
 #include "drtaint_shadow.h"
 #include "drtaint_helper.h"
-#include "utils.h"
 
 static dr_emit_flags_t
 event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *where,
                       bool for_trace, bool translating, void *user_data);
 
+static bool
+event_pre_syscall(void *drcontext, int sysnum);
+
 static void
-nudge_event(void *drcontext, uint64 argument);
+event_post_syscall(void *drcontext, int sysnum);
 
 static int drtaint_init_count;
 
@@ -22,7 +26,8 @@ static client_id_t client_id;
 bool
 drtaint_init(client_id_t id)
 {
-    drreg_options_t  ops = {sizeof(ops), 4, false};
+    drreg_options_t drreg_ops = {sizeof(drreg_ops), 4, false};
+    drsys_options_t drsys_ops = {sizeof(drsys_ops), 0};
     drmgr_priority_t pri = {sizeof(pri),
         DRMGR_PRIORITY_NAME_DRTAINT, NULL, NULL,
         DRMGR_PRIORITY_INSERT_DRTAINT};
@@ -33,12 +38,16 @@ drtaint_init(client_id_t id)
     client_id = id;
     drmgr_init();
     if (!drtaint_shadow_init(id) ||
-        drreg_init(&ops) != DRREG_SUCCESS)
+        drreg_init(&drreg_ops) != DRREG_SUCCESS ||
+        drsys_init(id, &drsys_ops) != DRMF_SUCCESS)
         return false;
+    drsys_filter_all_syscalls();
     if (!drmgr_register_bb_instrumentation_event(NULL,
-                event_app_instruction, &pri))
+                                                 event_app_instruction,
+                                                 &pri) ||
+        !drmgr_register_pre_syscall_event(event_pre_syscall) ||
+        !drmgr_register_post_syscall_event(event_post_syscall))
         return false;
-    dr_register_nudge_event(nudge_event, id);
     return true;
 }
 
@@ -48,10 +57,12 @@ drtaint_exit(void)
     int count = dr_atomic_add32_return_sum(&drtaint_init_count, -1);
     if (count != 0)
         return;
-
+    drmgr_unregister_pre_syscall_event(event_pre_syscall);
+    drmgr_unregister_post_syscall_event(event_post_syscall);
     drtaint_shadow_exit();
     drmgr_exit();
     drreg_exit();
+    drsys_exit();
 }
 
 bool
@@ -92,29 +103,6 @@ bool
 drtaint_set_app_taint(void *drcontext, app_pc app, byte result)
 {
     return drtaint_shadow_set_app_taint(drcontext, app, result);
-}
-
-bool
-drtaint_write_shadow_values(FILE *fp)
-{
-    return drtaint_shadow_write_shadow_values(fp);
-}
-
-void
-drtaint_dump_taint_to_log(void *drcontext)
-{
-    file_t nudge_file = log_file_open(client_id, drcontext, NULL,
-                                      "drtaint_dump",
-                                      DR_FILE_ALLOW_LARGE);
-    FILE  *nudge_file_fp = log_stream_from_file(nudge_file);
-    drtaint_write_shadow_values(nudge_file_fp);
-    log_stream_close(nudge_file_fp);
-}
-
-static void
-nudge_event(void *drcontext, uint64 arg)
-{
-    drtaint_dump_taint_to_log(drcontext);
 }
 
 /* ======================================================================================
@@ -252,6 +240,52 @@ propagate_arith_reg_imm(void *drcontext, void *tag, instrlist_t *ilist, instr_t 
                              (drcontext,
                               OPND_CREATE_MEM8(sreg2, 0),
                               opnd_create_reg(sreg1)));
+}
+
+static void
+propagate_mla(void *drcontext, void *tag, instrlist_t *ilist, instr_t *where)
+{
+    /* mla reg4, reg3, reg2, reg1 */
+    auto sreg1 = drreg_reservation { ilist, where };
+    auto sreg2 = drreg_reservation { ilist, where };
+    reg_id_t sreg3 = sreg2;
+    reg_id_t sreg4 = sreg3; /* we reuse a register for this */
+
+    reg_id_t reg1 = opnd_get_reg(instr_get_src(where, 2));
+    reg_id_t reg2 = opnd_get_reg(instr_get_src(where, 1));
+    reg_id_t reg3 = opnd_get_reg(instr_get_src(where, 0));
+    reg_id_t reg4 = opnd_get_reg(instr_get_dst(where, 0));
+
+    drtaint_insert_reg_to_taint(drcontext, ilist, where, reg1, sreg1);
+    instrlist_meta_preinsert(ilist, where, XINST_CREATE_load_1byte
+                             (drcontext,
+                              opnd_create_reg(sreg1),
+                              OPND_CREATE_MEM8(sreg1, 0)));
+    drtaint_insert_reg_to_taint(drcontext, ilist, where, reg2, sreg2);
+    instrlist_meta_preinsert(ilist, where, XINST_CREATE_load_1byte
+                             (drcontext,
+                              opnd_create_reg(sreg2),
+                              OPND_CREATE_MEM8(sreg2, 0)));
+    instrlist_meta_preinsert(ilist, where, INSTR_CREATE_orr
+                             (drcontext,
+                              opnd_create_reg(sreg1),
+                              opnd_create_reg(sreg2),
+                              opnd_create_reg(sreg1)));
+    drtaint_insert_reg_to_taint(drcontext, ilist, where, reg3, sreg3);
+    instrlist_meta_preinsert(ilist, where, XINST_CREATE_load_1byte
+                             (drcontext,
+                              opnd_create_reg(sreg3),
+                              OPND_CREATE_MEM8(sreg3, 0)));
+    instrlist_meta_preinsert(ilist, where, INSTR_CREATE_orr
+                             (drcontext,
+                              opnd_create_reg(sreg1),
+                              opnd_create_reg(sreg3),
+                              opnd_create_reg(sreg1)));
+    drtaint_insert_reg_to_taint(drcontext, ilist, where, reg4, sreg4);
+    instrlist_meta_preinsert_xl8(ilist, where, XINST_CREATE_store_1byte
+                                 (drcontext,
+                                  OPND_CREATE_MEM8(sreg4, 0),
+                                  opnd_create_reg(sreg1)));
 }
 
 static void
@@ -951,30 +985,24 @@ typedef enum { DB, IA, DA, IB } stack_dir_t;
 
 template <stack_dir_t T>
 struct addr_calculator {
-    app_pc addr(instr_t *instr, void *base, int i) {
+    app_pc addr(instr_t *instr, void *base, int i, int top) {
         DR_ASSERT_MSG(false, "Unreachable");
     } };
 template<> struct addr_calculator<DB> {
-    app_pc addr(instr_t *instr, void *base, int i) {
-        int top = instr_num_dsts(instr) == 2 ?
-            instr_num_srcs(instr) :
-            instr_num_srcs(instr) - 1;
+    app_pc addr(instr_t *instr, void *base, int i, int top) {
         return (app_pc)base - 4*(top - i - 1);
     } };
 template<> struct addr_calculator<IA> {
-    app_pc addr(instr_t *instr, void *base, int i) {
+    app_pc addr(instr_t *instr, void *base, int i, int top) {
         return (app_pc)base + 4*i;
     } };
 /* XXX: these are probably not correct */
 template<> struct addr_calculator<DA> {
-    app_pc addr(instr_t *instr, void *base, int i) {
+    app_pc addr(instr_t *instr, void *base, int i, int top) {
         return (app_pc)base - 4*i;
     } };
 template<> struct addr_calculator<IB> {
-    app_pc addr(instr_t *instr, void *base, int i) {
-        int top = instr_num_dsts(instr) == 2 ?
-            instr_num_srcs(instr) :
-            instr_num_srcs(instr) - 1;
+    app_pc addr(instr_t *instr, void *base, int i, int top) {
         return (app_pc)base + 4*(top - i - 1);
     } };
 
@@ -988,7 +1016,6 @@ propagate_ldm_cc_template(void *pc, void *base, bool writeback)
 
     for (int i = 0; i < instr_num_dsts(instr); ++i) {
         bool ok;
-        /* this indicates a writeback */
         if (writeback &&
             (opnd_get_reg(instr_get_dst(instr, i)) ==
              opnd_get_reg(instr_get_src(instr, 1))))
@@ -996,7 +1023,10 @@ propagate_ldm_cc_template(void *pc, void *base, bool writeback)
         /* set taint from stack to the appropriate register */
         byte res;
         auto calc = addr_calculator<c> { };
-        ok = drtaint_get_app_taint(drcontext, calc.addr(instr, base, i), &res);
+        int top = writeback ?
+            instr_num_dsts(instr) :
+            instr_num_dsts(instr) - 1;
+        ok = drtaint_get_app_taint(drcontext, calc.addr(instr, base, i, top), &res);
         DR_ASSERT(ok);
         ok = drtaint_set_reg_taint(drcontext, opnd_get_reg(instr_get_dst(instr, i)), res);
         DR_ASSERT(ok);
@@ -1023,10 +1053,37 @@ propagate_stm_cc_template(void *pc, void *base, bool writeback)
         ok = drtaint_get_reg_taint(drcontext, opnd_get_reg(instr_get_src(instr, i)), &res);
         DR_ASSERT(ok);
         auto calc = addr_calculator<c> { };
-        ok = drtaint_set_app_taint(drcontext, calc.addr(instr, base, i), res);
+        int top = writeback ?
+            instr_num_srcs(instr) :
+            instr_num_srcs(instr) - 1;
+        ok = drtaint_set_app_taint(drcontext, calc.addr(instr, base, i, top), res);
         DR_ASSERT(ok);
     }
     instr_destroy(drcontext, instr);
+}
+
+static bool
+instr_handle_constant_func(void *drcontext, void *tag, instrlist_t *ilist, instr_t *where)
+{
+    short opcode = instr_get_opcode(where);
+    if (opcode == OP_eor  ||
+        opcode == OP_eors ||
+        opcode == OP_sub  ||
+        opcode == OP_subs ||
+        opcode == OP_sbc  ||
+        opcode == OP_sbcs) {
+        /* xor r1, r0, r0 */
+        if (!opnd_is_reg(instr_get_src(where, 0)))
+            return false;
+        if (!opnd_is_reg(instr_get_src(where, 1)))
+            return false;
+        if (opnd_get_reg(instr_get_src(where, 0)) !=
+            opnd_get_reg(instr_get_src(where, 1)))
+            return false;
+        propagate_mov_imm_src(drcontext, tag, ilist, where);
+        return true;
+    }
+    return false;
 }
 
 static dr_emit_flags_t
@@ -1037,6 +1094,10 @@ event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *w
         unimplemented_opcode(where);
         return DR_EMIT_DEFAULT;
     }
+
+    if (instr_handle_constant_func(drcontext, tag, ilist, where))
+        return DR_EMIT_DEFAULT;
+
     switch (instr_get_opcode(where)) {
     case OP_ldmia:
         dr_insert_clean_call(drcontext, ilist, where, (void *)propagate_ldm_cc_template<IA>,
@@ -1209,6 +1270,11 @@ event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *w
         propagate_umull(drcontext, tag, ilist, where);
         break;
 
+    case OP_mla:
+    case OP_mls:
+        propagate_mla(drcontext, tag, ilist, where);
+        break;
+
     case OP_bl:
     case OP_blx:
     case OP_blx_ind:
@@ -1264,4 +1330,58 @@ event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *w
     }
 
     return DR_EMIT_DEFAULT;
+}
+
+/* ======================================================================================
+ * system call clearing and handling routines
+ * ==================================================================================== */
+static bool
+drsys_iter_cb(drsys_arg_t *arg, void *drcontext)
+{
+    if (!arg->valid)
+        return true;
+    if (arg->pre)
+        return true;
+#define TEST(mask, var) (((mask) & (var)) != 0)
+    if (TEST(arg->mode, DRSYS_PARAM_OUT)) {
+        char *buffer = (char *)arg->start_addr;
+        for (int i = 0; i < arg->size; ++i) {
+            if (!drtaint_set_app_taint(drcontext,
+                    (app_pc)buffer + i, 0))
+                DR_ASSERT(false);
+        }
+    }
+#undef TEST
+    return true;
+}
+
+static bool
+event_pre_syscall(void *drcontext, int sysnum)
+{
+    if (drsys_iterate_memargs(drcontext, drsys_iter_cb, drcontext) !=
+        DRMF_SUCCESS)
+        DR_ASSERT(false);
+    return true;
+}
+
+static void
+event_post_syscall(void *drcontext, int sysnum)
+{
+    dr_syscall_result_info_t info = { sizeof(info), };
+    dr_syscall_get_result_ex(drcontext, &info);
+
+    /* all syscalls untaint rax */
+    drtaint_set_reg_taint(drcontext, DR_REG_R0, 0);
+
+    if (!info.succeeded) {
+        /* We only care about tainting if the syscall
+         * succeeded.
+         */
+        return;
+    }
+
+    /* clear taint for system calls with an OUT memarg param */
+    if (drsys_iterate_memargs(drcontext, drsys_iter_cb, drcontext) !=
+        DRMF_SUCCESS)
+        DR_ASSERT(false);
 }

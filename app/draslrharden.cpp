@@ -40,12 +40,6 @@ exit_event(void);
 static void
 event_thread_init(void *drcontext);
 
-static void
-event_thread_context_init(void *drcontext, bool new_depth);
-
-static void
-event_thread_context_exit(void *drcontext, bool process_exit);
-
 static bool
 event_filter_syscall(void *drcontext, int sysnum);
 
@@ -70,27 +64,14 @@ event_app_instruction_pc(void *drcontext, void *tag, instrlist_t *bb, instr_t *i
 static void
 taint_stack(int argc, char *argv[], char *envp[]);
 
-static droption_t<bool> dump_taint_on_exit
-(DROPTION_SCOPE_CLIENT, "dump_taint_on_exit", false,
- "Dump taint profile to file on exit",
- "On exit of app, dump taint profile that can be parsed into a bitmap by vis.py "
- "to visualize taint introduced via the taint source API");
-
 static droption_t<bool> fail_address_leaks
 (DROPTION_SCOPE_CLIENT, "fail_address_leaks", false,
  "Fail all address leaks",
  "If an address leak is about to occur, i.e. via send() or write() system calls,"
  "fail the leaky system call to prevent the leak");
 
-typedef struct {
-    /* {recv,read,uname} parameter */
-    char  *buf;
-    char  *buf2;
-} per_thread_t;
-
 static app_pc exe_start;
 static bool tainted_argv;
-static int tcls_idx;
 
 DR_EXPORT void
 dr_client_main(client_id_t id, int argc, const char *argv[])
@@ -117,16 +98,15 @@ dr_client_main(client_id_t id, int argc, const char *argv[])
                                             event_app_instruction_pc,
                                             &pri);
 
-    drreg_options_t  ops = {sizeof(ops), 3, false};
-    drreg_init(&ops);
+    drreg_options_t drreg_ops = {sizeof(drreg_ops), 3, false};
+    auto drreg_ret = drreg_init(&drreg_ops);
+    DR_ASSERT(drreg_ret == DRREG_SUCCESS);
 
-    drmgr_register_thread_init_event(event_thread_init);
     dr_register_filter_syscall_event(event_filter_syscall);
     drmgr_register_pre_syscall_event(event_pre_syscall);
     drmgr_register_post_syscall_event(event_post_syscall);
-    tcls_idx = drmgr_register_cls_field(event_thread_context_init,
-                                        event_thread_context_exit);
-    DR_ASSERT(tcls_idx != -1);
+
+    drmgr_register_thread_init_event(event_thread_init);
     dr_register_exit_event(exit_event);
 }
 
@@ -134,11 +114,6 @@ static void
 exit_event(void)
 {
     void *drcontext = dr_get_current_drcontext();
-    if (dump_taint_on_exit.get_value())
-        drtaint_dump_taint_to_log(drcontext);
-    drmgr_unregister_cls_field(event_thread_context_init,
-                               event_thread_context_exit,
-                               tcls_idx);
     drmgr_unregister_bb_instrumentation_event(event_bb_analysis_start);
     drmgr_unregister_bb_insertion_event(event_app_instruction_start);
     drmgr_unregister_bb_insertion_event(event_app_instruction_pc);
@@ -149,7 +124,7 @@ exit_event(void)
 }
 
 /****************************************************************************
- * Taint everything we can on process startup
+ * Introduce taint sources
  */
 
 static void
@@ -163,7 +138,6 @@ static dr_emit_flags_t
 event_bb_analysis_start(void *drcontext, void *tag, instrlist_t *bb,
                         bool for_trace, bool translating, void **user_data)
 {
-
     *user_data = (void *)false;
     if (!tainted_argv) {
         module_data_t *mod = dr_lookup_module(dr_fragment_app_pc(tag));
@@ -182,7 +156,6 @@ event_app_instruction_start(void *drcontext, void *tag, instrlist_t *bb, instr_t
         !drmgr_is_first_instr(drcontext, instr))
         return DR_EMIT_DEFAULT;
 
-    drmgr_disable_auto_predication(drcontext, bb);
     /* Emit the following instrumentation:
      * ldr r0, [sp]
      * add r1, sp, #4
@@ -195,6 +168,7 @@ event_app_instruction_start(void *drcontext, void *tag, instrlist_t *bb, instr_t
     auto envp = drreg_reservation { bb, instr };
 
 #define MINSERT instrlist_meta_preinsert
+    drmgr_disable_auto_predication(drcontext, bb);
     MINSERT(bb, instr, XINST_CREATE_load
             (drcontext,
              opnd_create_reg(argc),
@@ -235,72 +209,40 @@ taint_stack(int argc, char *argv[], char *envp[])
     void *drcontext = dr_get_current_drcontext();
 
     /* taint argv on the stack */
-    dr_fprintf(STDERR, "[argv] Tainting argv\n");
     for (int i = 0; i < argc; ++i) {
         drtaint_set_app_taint(drcontext, (app_pc)argv+i,
                               STCK_POINTER_TAINT);
     }
     /* taint envp on the stack */
-    dr_fprintf(STDERR, "[envp] Tainting envp\n");
     for (int i = 0; envp[i]; ++i) {
         drtaint_set_app_taint(drcontext, (app_pc)envp+i,
                               STCK_POINTER_TAINT);
     }
 }
 
-/****************************************************************************
- * Introduce taint sinks and sources
- */
-
 static dr_emit_flags_t
 event_app_instruction_pc(void *drcontext, void *tag, instrlist_t *bb, instr_t *instr,
                          bool for_trace, bool translating, void *user_data)
 {
-    int i;
-    bool should_taint = false;
+    if (!instr_reads_from_reg(instr, DR_REG_PC,
+                              DR_QUERY_INCLUDE_ALL))
+        return DR_EMIT_DEFAULT;
 
     /* If PC is read, we taint it so that the following app instruction
      * spreads its taint accordingly.
      */
-    for (i = 0; i < instr_num_srcs(instr); ++i) {
-        should_taint |= opnd_uses_reg(
-                instr_get_src(instr, i), DR_REG_PC);
-    }
-    if (should_taint) {
-        auto sreg1 = drreg_reservation { bb, instr };
-        auto sreg2 = drreg_reservation { bb, instr };
-        instrlist_meta_preinsert(bb, instr, XINST_CREATE_move
-                                 (drcontext,
-                                  opnd_create_reg(sreg2),
-                                  OPND_CREATE_INT(TEXT_POINTER_TAINT)));
-        drtaint_insert_reg_to_taint(drcontext, bb, instr, DR_REG_PC, sreg1);
-        instrlist_meta_preinsert(bb, instr, XINST_CREATE_store_1byte
-                                 (drcontext,
-                                  OPND_CREATE_MEM8(sreg1, 0),
-                                  opnd_create_reg(sreg2)));
-    }
+    auto sreg1 = drreg_reservation { bb, instr };
+    auto sreg2 = drreg_reservation { bb, instr };
+    instrlist_meta_preinsert(bb, instr, XINST_CREATE_move
+                             (drcontext,
+                              opnd_create_reg(sreg2),
+                              OPND_CREATE_INT(TEXT_POINTER_TAINT)));
+    drtaint_insert_reg_to_taint(drcontext, bb, instr, DR_REG_PC, sreg1);
+    instrlist_meta_preinsert(bb, instr, XINST_CREATE_store_1byte
+                             (drcontext,
+                              OPND_CREATE_MEM8(sreg1, 0),
+                              opnd_create_reg(sreg2)));
     return DR_EMIT_DEFAULT;
-}
-
-static void
-event_thread_context_init(void *drcontext, bool new_depth)
-{
-    per_thread_t *data;
-    if (new_depth) {
-        data = (per_thread_t *) dr_thread_alloc(drcontext, sizeof(per_thread_t));
-        drmgr_set_cls_field(drcontext, tcls_idx, data);
-    } else
-        data = (per_thread_t *) drmgr_get_cls_field(drcontext, tcls_idx);
-    memset(data, 0, sizeof(*data));
-}
-
-static void
-event_thread_context_exit(void *drcontext, bool thread_exit)
-{
-    if (thread_exit) {
-        per_thread_t *data = (per_thread_t *) drmgr_get_cls_field(drcontext, tcls_idx);
-        dr_thread_free(drcontext, data, sizeof(per_thread_t));
-    }
 }
 
 static bool
@@ -309,64 +251,11 @@ event_filter_syscall(void *drcontext, int sysnum)
     return true;
 }
 
-static bool
-event_pre_syscall(void *drcontext, int sysnum)
-{
-    if (sysnum == SYS_write || sysnum == SYS_send) {
-        /* we want to check these for taint */
-        char *buffer = (char *)dr_syscall_get_param(drcontext, 1);
-        size_t len   = dr_syscall_get_param(drcontext, 2);
-
-        for (int i = 0; i < len; ++i) {
-            byte result;
-            if (drtaint_get_app_taint(drcontext, (app_pc)&buffer[i],
-                                      &result) && result != 0) {
-                dr_fprintf(STDERR, "[ASLR] Address leak\n");
-                return !fail_address_leaks.get_value();
-            }
-        }
-        return true;
-    }
-
-    per_thread_t *data = (per_thread_t *)
-        drmgr_get_cls_field(drcontext, tcls_idx);
-
-    if (sysnum == SYS_uname) {
-        /* Save this information for later, so we can handle the
-         * uname *only* if it didn't fail.
-         */
-        data->buf = (char *)dr_syscall_get_param(drcontext, 0);
-    } else if (sysnum == SYS_recv ||
-               sysnum == SYS_read ||
-               sysnum == SYS_lstat ||
-               sysnum == SYS_lstat64 ||
-               sysnum == SYS_fstat ||
-               sysnum == SYS_fstat64 ||
-               sysnum == SYS_stat ||
-               sysnum == SYS_stat64 ||
-               sysnum == SYS_statfs ||
-               sysnum == SYS_statfs64 ||
-               sysnum == SYS_clock_gettime) {
-        /* Save this information for later, so we can handle these
-         * syscalls *only* if they didn't fail.
-         */
-        data->buf = (char *)dr_syscall_get_param(drcontext, 1);
-    } else if (sysnum == SYS_gettimeofday) {
-        data->buf  = (char *)dr_syscall_get_param(drcontext, 0);
-        data->buf2 = (char *)dr_syscall_get_param(drcontext, 1);
-    }
-
-    return true;
-}
-
 static void
 event_post_syscall(void *drcontext, int sysnum)
 {
     dr_syscall_result_info_t info = { sizeof(info), };
     dr_syscall_get_result_ex(drcontext, &info);
-
-    /* all syscalls untaint rax (except mmap2, brk, etc) */
-    drtaint_set_reg_taint(drcontext, DR_REG_R0, 0);
 
     if (!info.succeeded) {
         /* We only care about tainting if the syscall
@@ -381,48 +270,37 @@ event_post_syscall(void *drcontext, int sysnum)
                               HEAP_POINTER_TAINT);
         return;
     }
+}
 
-#define TAINT_SYSNUM(sysnum_check, bufsz)               \
-    if (sysnum == sysnum_check) {                       \
-        per_thread_t *data = (per_thread_t *)           \
-            drmgr_get_cls_field(drcontext, tcls_idx);   \
-        for (int i = 0; i < bufsz; ++i) {               \
-            if (!drtaint_set_app_taint(drcontext,       \
-                        (app_pc)data->buf + i, 0))      \
-                DR_ASSERT(false);                       \
-        }                                               \
-    }
-    /* We need to clear taint on the field written
-     * out by sysnum. All following syscalls do so.
-     */
-    TAINT_SYSNUM(SYS_recv,      info.value);
-    TAINT_SYSNUM(SYS_read,      info.value);
-    TAINT_SYSNUM(SYS_uname,     sizeof(utsname));
-    TAINT_SYSNUM(SYS_lstat,     sizeof(struct stat));
-    TAINT_SYSNUM(SYS_fstat,     sizeof(struct stat));
-    TAINT_SYSNUM(SYS_stat,      sizeof(struct stat));
-    TAINT_SYSNUM(SYS_statfs,    sizeof(struct stat));
-    TAINT_SYSNUM(SYS_lstat64,   sizeof(struct stat64));
-    TAINT_SYSNUM(SYS_fstat64,   sizeof(struct stat64));
-    TAINT_SYSNUM(SYS_stat64,    sizeof(struct stat64));
-    TAINT_SYSNUM(SYS_statfs64,  sizeof(struct stat64));
-    TAINT_SYSNUM(SYS_clock_gettime, sizeof(struct timespec));
-#undef TAINT_SYSNUM
+/****************************************************************************
+ * Introduce taint sinks
+ */
 
-    /* gettimeofday has two arguments */
-    if (sysnum == SYS_gettimeofday) {
-        per_thread_t *data = (per_thread_t *)
-            drmgr_get_cls_field(drcontext, tcls_idx);
-        for (int i = 0; i < sizeof(struct timeval); ++i) {
-            if (!drtaint_set_app_taint(drcontext,
-                        (app_pc)data->buf  + i, 0))
-                DR_ASSERT(false);
-        }
-        for (int i = 0; i < sizeof(struct timezone); ++i) {
-            if (!drtaint_set_app_taint(drcontext,
-                        (app_pc)data->buf2 + i, 0))
-                DR_ASSERT(false);
+static bool
+handle_address_leak(void *drcontext)
+{
+    dr_fprintf(STDERR, "[ASLR] Address leak\n");
+    if (fail_address_leaks.get_value()) {
+        dr_syscall_set_result(drcontext, -1);
+        return false;
+    } else
+        return true;
+}
+
+static bool
+event_pre_syscall(void *drcontext, int sysnum)
+{
+    if (sysnum == SYS_write || sysnum == SYS_send) {
+        /* we want to check these for taint */
+        char *buffer = (char *)dr_syscall_get_param(drcontext, 1);
+        size_t len   = dr_syscall_get_param(drcontext, 2);
+
+        for (int i = 0; i < len; ++i) {
+            byte result;
+            if (drtaint_get_app_taint(drcontext, (app_pc)&buffer[i],
+                                      &result) && result != 0)
+                return handle_address_leak(drcontext);
         }
     }
-    /* TODO: this is definitely not an exhaustive list */
+    return true;
 }
