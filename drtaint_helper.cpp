@@ -23,12 +23,6 @@ void
 unimplemented_opcode(instr_t *where)
 {
     /* N/A */
-#if 0
-    void *drcontext = dr_get_current_drcontext();
-    dr_fprintf(STDERR, "NYI %p: ", instr_get_app_pc(where));
-    instr_disassemble(drcontext, where, STDERR);
-    dr_fprintf(STDERR, "\n");
-#endif
 }
 
 void

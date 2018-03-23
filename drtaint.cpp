@@ -1098,62 +1098,91 @@ event_app_instruction(void *drcontext, void *tag, instrlist_t *ilist, instr_t *w
     if (instr_handle_constant_func(drcontext, tag, ilist, where))
         return DR_EMIT_DEFAULT;
 
+    /* We define a routine to make it easier to call drreg_restore_app_value() in
+     * the case that we have to swap a register out to make space for the stolen
+     * reg.
+     */
+#define DRREG_RESTORE_APP_VALUE(drcontext, ilist, where, opnd, cb)      \
+    do {                                                                \
+        reg_id_t swap = DR_REG_NULL;                                    \
+        drreg_restore_app_values(drcontext, ilist, where, opnd, &swap); \
+        cb;                                                             \
+        if (swap != DR_REG_NULL)                                        \
+            drreg_unreserve_register(drcontext, ilist, where, swap);    \
+    } while (false);
+
     switch (instr_get_opcode(where)) {
     case OP_ldmia:
-        dr_insert_clean_call(drcontext, ilist, where, (void *)propagate_ldm_cc_template<IA>,
-                             false, 3, OPND_CREATE_INTPTR(instr_get_app_pc(where)),
-                                       opnd_create_reg(opnd_get_base(instr_get_src(where, 0))),
-                                       /* writeback */
-                                       OPND_CREATE_INT8(instr_num_srcs(where) > 1));
+        DRREG_RESTORE_APP_VALUE(drcontext, ilist, where, instr_get_src(where, 0), {
+            dr_insert_clean_call(drcontext, ilist, where, (void *)propagate_ldm_cc_template<IA>,
+                                 false, 3, OPND_CREATE_INTPTR(instr_get_app_pc(where)),
+                                           opnd_create_reg(opnd_get_base(instr_get_src(where, 0))),
+                                           /* writeback */
+                                           OPND_CREATE_INT8(instr_num_srcs(where) > 1));
+        });
         break;
     case OP_ldmdb:
-        dr_insert_clean_call(drcontext, ilist, where, (void *)propagate_ldm_cc_template<DB>,
-                             false, 3, OPND_CREATE_INTPTR(instr_get_app_pc(where)),
-                                       opnd_create_reg(opnd_get_base(instr_get_src(where, 0))),
-                                       /* writeback */
-                                       OPND_CREATE_INT8(instr_num_srcs(where) > 1));
+        DRREG_RESTORE_APP_VALUE(drcontext, ilist, where, instr_get_src(where, 0), {
+            dr_insert_clean_call(drcontext, ilist, where, (void *)propagate_ldm_cc_template<DB>,
+                                 false, 3, OPND_CREATE_INTPTR(instr_get_app_pc(where)),
+                                           opnd_create_reg(opnd_get_base(instr_get_src(where, 0))),
+                                           /* writeback */
+                                           OPND_CREATE_INT8(instr_num_srcs(where) > 1));
+        });
         break;
     case OP_ldmib:
-        dr_insert_clean_call(drcontext, ilist, where, (void *)propagate_ldm_cc_template<IB>,
-                             false, 3, OPND_CREATE_INTPTR(instr_get_app_pc(where)),
-                                       opnd_create_reg(opnd_get_base(instr_get_src(where, 0))),
-                                       /* writeback */
-                                       OPND_CREATE_INT8(instr_num_srcs(where) > 1));
+        DRREG_RESTORE_APP_VALUE(drcontext, ilist, where, instr_get_src(where, 0), {
+            dr_insert_clean_call(drcontext, ilist, where, (void *)propagate_ldm_cc_template<IB>,
+                                 false, 3, OPND_CREATE_INTPTR(instr_get_app_pc(where)),
+                                           opnd_create_reg(opnd_get_base(instr_get_src(where, 0))),
+                                           /* writeback */
+                                           OPND_CREATE_INT8(instr_num_srcs(where) > 1));
+        });
         break;
     case OP_ldmda:
-        dr_insert_clean_call(drcontext, ilist, where, (void *)propagate_ldm_cc_template<DA>,
-                             false, 3, OPND_CREATE_INTPTR(instr_get_app_pc(where)),
-                                       opnd_create_reg(opnd_get_base(instr_get_src(where, 0))),
-                                       /* writeback */
-                                       OPND_CREATE_INT8(instr_num_srcs(where) > 1));
+        DRREG_RESTORE_APP_VALUE(drcontext, ilist, where, instr_get_src(where, 0), {
+            dr_insert_clean_call(drcontext, ilist, where, (void *)propagate_ldm_cc_template<DA>,
+                                 false, 3, OPND_CREATE_INTPTR(instr_get_app_pc(where)),
+                                           opnd_create_reg(opnd_get_base(instr_get_src(where, 0))),
+                                           /* writeback */
+                                           OPND_CREATE_INT8(instr_num_srcs(where) > 1));
+        });
         break;
     case OP_stmia:
-        dr_insert_clean_call(drcontext, ilist, where, (void *)propagate_stm_cc_template<IA>,
-                             false, 3, OPND_CREATE_INTPTR(instr_get_app_pc(where)),
-                                       opnd_create_reg(opnd_get_base(instr_get_dst(where, 0))),
-                                       /* writeback */
-                                       OPND_CREATE_INT8(instr_num_dsts(where) > 1));
+        DRREG_RESTORE_APP_VALUE(drcontext, ilist, where, instr_get_dst(where, 0), {
+            dr_insert_clean_call(drcontext, ilist, where, (void *)propagate_stm_cc_template<IA>,
+                                 false, 3, OPND_CREATE_INTPTR(instr_get_app_pc(where)),
+                                           opnd_create_reg(opnd_get_base(instr_get_dst(where, 0))),
+                                           /* writeback */
+                                           OPND_CREATE_INT8(instr_num_dsts(where) > 1));
+        });
         break;
     case OP_stmdb:
-        dr_insert_clean_call(drcontext, ilist, where, (void *)propagate_stm_cc_template<DB>,
-                             false, 3, OPND_CREATE_INTPTR(instr_get_app_pc(where)),
-                                       opnd_create_reg(opnd_get_base(instr_get_dst(where, 0))),
-                                       /* writeback */
-                                       OPND_CREATE_INT8(instr_num_dsts(where) > 1));
+        DRREG_RESTORE_APP_VALUE(drcontext, ilist, where, instr_get_dst(where, 0), {
+            dr_insert_clean_call(drcontext, ilist, where, (void *)propagate_stm_cc_template<DB>,
+                                 false, 3, OPND_CREATE_INTPTR(instr_get_app_pc(where)),
+                                           opnd_create_reg(opnd_get_base(instr_get_dst(where, 0))),
+                                           /* writeback */
+                                           OPND_CREATE_INT8(instr_num_dsts(where) > 1));
+        });
         break;
     case OP_stmib:
-        dr_insert_clean_call(drcontext, ilist, where, (void *)propagate_stm_cc_template<IB>,
-                             false, 3, OPND_CREATE_INTPTR(instr_get_app_pc(where)),
-                                       opnd_create_reg(opnd_get_base(instr_get_dst(where, 0))),
-                                       /* writeback */
-                                       OPND_CREATE_INT8(instr_num_dsts(where) > 1));
+        DRREG_RESTORE_APP_VALUE(drcontext, ilist, where, instr_get_dst(where, 0), {
+            dr_insert_clean_call(drcontext, ilist, where, (void *)propagate_stm_cc_template<IB>,
+                                 false, 3, OPND_CREATE_INTPTR(instr_get_app_pc(where)),
+                                           opnd_create_reg(opnd_get_base(instr_get_dst(where, 0))),
+                                           /* writeback */
+                                           OPND_CREATE_INT8(instr_num_dsts(where) > 1));
+        });
         break;
     case OP_stmda:
-        dr_insert_clean_call(drcontext, ilist, where, (void *)propagate_stm_cc_template<DA>,
-                             false, 3, OPND_CREATE_INTPTR(instr_get_app_pc(where)),
-                                       opnd_create_reg(opnd_get_base(instr_get_dst(where, 0))),
-                                       /* writeback */
-                                       OPND_CREATE_INT8(instr_num_dsts(where) > 1));
+        DRREG_RESTORE_APP_VALUE(drcontext, ilist, where, instr_get_dst(where, 0), {
+            dr_insert_clean_call(drcontext, ilist, where, (void *)propagate_stm_cc_template<DA>,
+                                 false, 3, OPND_CREATE_INTPTR(instr_get_app_pc(where)),
+                                           opnd_create_reg(opnd_get_base(instr_get_dst(where, 0))),
+                                           /* writeback */
+                                           OPND_CREATE_INT8(instr_num_dsts(where) > 1));
+        });
         break;
 
     case OP_ldr:
