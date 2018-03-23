@@ -983,28 +983,22 @@ instr_is_simd(instr_t *where)
 
 typedef enum { DB, IA, DA, IB } stack_dir_t;
 
-template <stack_dir_t T>
-struct addr_calculator {
-    app_pc addr(instr_t *instr, void *base, int i, int top) {
-        DR_ASSERT_MSG(false, "Unreachable");
-    } };
-template<> struct addr_calculator<DB> {
-    app_pc addr(instr_t *instr, void *base, int i, int top) {
-        return (app_pc)base - 4*(top - i - 1);
-    } };
-template<> struct addr_calculator<IA> {
-    app_pc addr(instr_t *instr, void *base, int i, int top) {
-        return (app_pc)base + 4*i;
-    } };
+template <stack_dir_t T> app_pc
+calculate_addr(instr_t *instr, void *base, int i, int top)
+{ DR_ASSERT_MSG(false, "Unreachable"); }
+template <> app_pc
+calculate_addr<DB>(instr_t *instr, void *base, int i, int top)
+{ return (app_pc)base - 4*(top - i - 1); }
+template <> app_pc
+calculate_addr<IA>(instr_t *instr, void *base, int i, int top)
+{ return (app_pc)base + 4*i; }
 /* XXX: these are probably not correct */
-template<> struct addr_calculator<DA> {
-    app_pc addr(instr_t *instr, void *base, int i, int top) {
-        return (app_pc)base - 4*i;
-    } };
-template<> struct addr_calculator<IB> {
-    app_pc addr(instr_t *instr, void *base, int i, int top) {
-        return (app_pc)base + 4*(top - i - 1);
-    } };
+template <> app_pc
+calculate_addr<DA>(instr_t *instr, void *base, int i, int top)
+{ return (app_pc)base - 4*i; }
+template <> app_pc
+calculate_addr<IB>(instr_t *instr, void *base, int i, int top)
+{ return (app_pc)base + 4*(top - i - 1); }
 
 template <stack_dir_t c> void
 propagate_ldm_cc_template(void *pc, void *base, bool writeback)
@@ -1022,11 +1016,10 @@ propagate_ldm_cc_template(void *pc, void *base, bool writeback)
             break;
         /* set taint from stack to the appropriate register */
         byte res;
-        auto calc = addr_calculator<c> { };
         int top = writeback ?
             instr_num_dsts(instr) :
             instr_num_dsts(instr) - 1;
-        ok = drtaint_get_app_taint(drcontext, calc.addr(instr, base, i, top), &res);
+        ok = drtaint_get_app_taint(drcontext, calculate_addr<c>(instr, base, i, top), &res);
         DR_ASSERT(ok);
         ok = drtaint_set_reg_taint(drcontext, opnd_get_reg(instr_get_dst(instr, i)), res);
         DR_ASSERT(ok);
@@ -1052,11 +1045,10 @@ propagate_stm_cc_template(void *pc, void *base, bool writeback)
         byte res;
         ok = drtaint_get_reg_taint(drcontext, opnd_get_reg(instr_get_src(instr, i)), &res);
         DR_ASSERT(ok);
-        auto calc = addr_calculator<c> { };
         int top = writeback ?
             instr_num_srcs(instr) :
             instr_num_srcs(instr) - 1;
-        ok = drtaint_set_app_taint(drcontext, calc.addr(instr, base, i, top), res);
+        ok = drtaint_set_app_taint(drcontext, calculate_addr<c>(instr, base, i, top), res);
         DR_ASSERT(ok);
     }
     instr_destroy(drcontext, instr);
