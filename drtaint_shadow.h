@@ -22,6 +22,11 @@ drtaint_shadow_insert_reg_to_shadow(void *drcontext, instrlist_t *ilist, instr_t
                                     reg_id_t shadow,  reg_id_t regaddr);
 
 bool
+drtaint_shadow_insert_reg_to_shadow_load(void *drcontext, instrlist_t *ilist,
+                                         instr_t *where, reg_id_t shadow,
+                                         reg_id_t regaddr);
+
+bool
 drtaint_shadow_get_reg_taint(void *drcontext, reg_id_t reg, byte *result);
 
 bool

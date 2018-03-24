@@ -5,17 +5,9 @@
 
 #include "../drtaint.h"
 #include "../drtaint_helper.h"
-#include "../utils.h"
 
 #include <iostream>
-#include <unistd.h>
-#include <asm-generic/ioctls.h>
-#include <sys/utsname.h>
-#include <sys/stat.h>
-#include <sys/time.h>
 #include <syscall.h>
-#include <termios.h>
-#include <time.h>
 
 /* This sample tries to prevent address leaks in an active exploitation
  * scenario. We identify 3 types of leaks (stack, heap, and libc or .text). If

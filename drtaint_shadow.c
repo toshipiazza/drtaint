@@ -247,6 +247,24 @@ drtaint_shadow_insert_reg_to_shadow(void *drcontext, instrlist_t *ilist, instr_t
 }
 
 bool
+drtaint_shadow_insert_reg_to_shadow_load(void *drcontext, instrlist_t *ilist,
+                                         instr_t *where, reg_id_t shadow,
+                                         reg_id_t regaddr)
+{
+    unsigned int offs = offsetof(per_thread_t, shadow_gprs[shadow - DR_REG_R0]);
+    DR_ASSERT(shadow - DR_REG_R0 < DR_NUM_GPR_REGS);
+    /* Load the per_thread data structure holding the thread-local taint
+     * values of each register.
+     */
+    drmgr_insert_read_tls_field(drcontext, tls_index, ilist, where, regaddr);
+    instrlist_meta_preinsert(ilist, where, XINST_CREATE_load_1byte
+                             (drcontext,
+                              opnd_create_reg(regaddr),
+                              OPND_CREATE_MEM8(regaddr, offs)));
+    return true;
+}
+
+bool
 drtaint_shadow_get_reg_taint(void *drcontext, reg_id_t reg, byte *result)
 {
     per_thread_t *data = drmgr_get_tls_field(drcontext, tls_index);

@@ -9,14 +9,12 @@ add_library(draslrharden SHARED
   app/draslrharden.cpp
   drtaint.cpp
   drtaint_shadow.c
-  drtaint_helper.cpp
-  utils.c)
+  drtaint_helper.cpp)
 add_library(drtaint SHARED
   app/drtaint_only.cpp
   drtaint.cpp
   drtaint_shadow.c
-  drtaint_helper.cpp
-  utils.c)
+  drtaint_helper.cpp)
 find_package(DynamoRIO REQUIRED)
 find_package(DrMemoryFramework REQUIRED)
 

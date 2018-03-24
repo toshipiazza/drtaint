@@ -82,6 +82,14 @@ drtaint_insert_reg_to_taint(void *drcontext, instrlist_t *ilist, instr_t *where,
 }
 
 bool
+drtaint_insert_reg_to_taint_load(void *drcontext, instrlist_t *ilist, instr_t *where,
+                                 reg_id_t shadow, reg_id_t regaddr)
+{
+    return drtaint_shadow_insert_reg_to_shadow_load(drcontext, ilist, where,
+                                                    shadow, regaddr);
+}
+
+bool
 drtaint_get_reg_taint(void *drcontext, reg_id_t reg, byte *result)
 {
     return drtaint_shadow_get_reg_taint(drcontext, reg, result);
@@ -141,11 +149,7 @@ propagate_str(void *drcontext, void *tag, instrlist_t *ilist, instr_t *where)
 
     drutil_insert_get_mem_addr(drcontext, ilist, where, mem2, sapp2, sreg1);
     drtaint_insert_app_to_taint(drcontext, ilist, where, sapp2, sreg1);
-    drtaint_insert_reg_to_taint(drcontext, ilist, where, reg1, sreg1);
-    instrlist_meta_preinsert(ilist, where, XINST_CREATE_load_1byte
-                             (drcontext,
-                              opnd_create_reg(sreg1),
-                              OPND_CREATE_MEM8(sreg1, 0)));
+    drtaint_insert_reg_to_taint_load(drcontext, ilist, where, reg1, sreg1);
     instrlist_meta_preinsert_xl8(ilist, where, XINST_CREATE_store_1byte
                                  (drcontext,
                                   OPND_CREATE_MEM8(sapp2, 0),
@@ -160,11 +164,7 @@ propagate_mov_regs(void *drcontext, void *tag, instrlist_t *ilist, instr_t *wher
     auto sreg2 = drreg_reservation { ilist, where };
     auto sreg1 = drreg_reservation { ilist, where };
 
-    drtaint_insert_reg_to_taint(drcontext, ilist, where, reg1, sreg1);
-    instrlist_meta_preinsert(ilist, where, XINST_CREATE_load_1byte
-                             (drcontext,
-                              opnd_create_reg(sreg1),
-                              OPND_CREATE_MEM8(sreg1, 0)));
+    drtaint_insert_reg_to_taint_load(drcontext, ilist, where, reg1, sreg1);
     drtaint_insert_reg_to_taint(drcontext, ilist, where, reg2, sreg2);
     instrlist_meta_preinsert(ilist, where, XINST_CREATE_store_1byte
                              (drcontext,
@@ -209,11 +209,7 @@ propagate_arith_imm_reg(void *drcontext, void *tag, instrlist_t *ilist, instr_t 
     reg_id_t reg2 = opnd_get_reg(instr_get_dst(where, 0));
     reg_id_t reg1 = opnd_get_reg(instr_get_src(where, 1));
 
-    drtaint_insert_reg_to_taint(drcontext, ilist, where, reg1, sreg1);
-    instrlist_meta_preinsert(ilist, where, XINST_CREATE_load_1byte
-                             (drcontext,
-                              opnd_create_reg(sreg1),
-                              OPND_CREATE_MEM8(sreg1, 0)));
+    drtaint_insert_reg_to_taint_load(drcontext, ilist, where, reg1, sreg1);
     drtaint_insert_reg_to_taint(drcontext, ilist, where, reg2, sreg2);
     instrlist_meta_preinsert(ilist, where, XINST_CREATE_store_1byte
                              (drcontext,
@@ -230,11 +226,7 @@ propagate_arith_reg_imm(void *drcontext, void *tag, instrlist_t *ilist, instr_t 
     reg_id_t reg2 = opnd_get_reg(instr_get_dst(where, 0));
     reg_id_t reg1 = opnd_get_reg(instr_get_src(where, 0));
 
-    drtaint_insert_reg_to_taint(drcontext, ilist, where, reg1, sreg1);
-    instrlist_meta_preinsert(ilist, where, XINST_CREATE_load_1byte
-                             (drcontext,
-                              opnd_create_reg(sreg1),
-                              OPND_CREATE_MEM8(sreg1, 0)));
+    drtaint_insert_reg_to_taint_load(drcontext, ilist, where, reg1, sreg1);
     drtaint_insert_reg_to_taint(drcontext, ilist, where, reg2, sreg2);
     instrlist_meta_preinsert(ilist, where, XINST_CREATE_store_1byte
                              (drcontext,
@@ -256,26 +248,14 @@ propagate_mla(void *drcontext, void *tag, instrlist_t *ilist, instr_t *where)
     reg_id_t reg3 = opnd_get_reg(instr_get_src(where, 0));
     reg_id_t reg4 = opnd_get_reg(instr_get_dst(where, 0));
 
-    drtaint_insert_reg_to_taint(drcontext, ilist, where, reg1, sreg1);
-    instrlist_meta_preinsert(ilist, where, XINST_CREATE_load_1byte
-                             (drcontext,
-                              opnd_create_reg(sreg1),
-                              OPND_CREATE_MEM8(sreg1, 0)));
-    drtaint_insert_reg_to_taint(drcontext, ilist, where, reg2, sreg2);
-    instrlist_meta_preinsert(ilist, where, XINST_CREATE_load_1byte
-                             (drcontext,
-                              opnd_create_reg(sreg2),
-                              OPND_CREATE_MEM8(sreg2, 0)));
+    drtaint_insert_reg_to_taint_load(drcontext, ilist, where, reg1, sreg1);
+    drtaint_insert_reg_to_taint_load(drcontext, ilist, where, reg2, sreg2);
     instrlist_meta_preinsert(ilist, where, INSTR_CREATE_orr
                              (drcontext,
                               opnd_create_reg(sreg1),
                               opnd_create_reg(sreg2),
                               opnd_create_reg(sreg1)));
-    drtaint_insert_reg_to_taint(drcontext, ilist, where, reg3, sreg3);
-    instrlist_meta_preinsert(ilist, where, XINST_CREATE_load_1byte
-                             (drcontext,
-                              opnd_create_reg(sreg3),
-                              OPND_CREATE_MEM8(sreg3, 0)));
+    drtaint_insert_reg_to_taint_load(drcontext, ilist, where, reg3, sreg3);
     instrlist_meta_preinsert(ilist, where, INSTR_CREATE_orr
                              (drcontext,
                               opnd_create_reg(sreg1),
@@ -302,16 +282,8 @@ propagate_umull(void *drcontext, void *tag, instrlist_t *ilist, instr_t *where)
     reg_id_t reg3 = opnd_get_reg(instr_get_dst(where, 0));
     reg_id_t reg4 = opnd_get_reg(instr_get_dst(where, 1));
 
-    drtaint_insert_reg_to_taint(drcontext, ilist, where, reg1, sreg1);
-    instrlist_meta_preinsert(ilist, where, XINST_CREATE_load_1byte
-                             (drcontext,
-                              opnd_create_reg(sreg1),
-                              OPND_CREATE_MEM8(sreg1, 0)));
-    drtaint_insert_reg_to_taint(drcontext, ilist, where, reg2, sreg2);
-    instrlist_meta_preinsert(ilist, where, XINST_CREATE_load_1byte
-                             (drcontext,
-                              opnd_create_reg(sreg2),
-                              OPND_CREATE_MEM8(sreg2, 0)));
+    drtaint_insert_reg_to_taint_load(drcontext, ilist, where, reg1, sreg1);
+    drtaint_insert_reg_to_taint_load(drcontext, ilist, where, reg2, sreg2);
     instrlist_meta_preinsert(ilist, where, INSTR_CREATE_orr
                              (drcontext,
                               opnd_create_reg(sreg1),
@@ -340,16 +312,8 @@ propagate_arith_reg_reg(void *drcontext, void *tag, instrlist_t *ilist, instr_t 
     reg_id_t reg2 = opnd_get_reg(instr_get_src(where, 0));
     reg_id_t reg1 = opnd_get_reg(instr_get_src(where, 1));
 
-    drtaint_insert_reg_to_taint(drcontext, ilist, where, reg1, sreg1);
-    instrlist_meta_preinsert(ilist, where, XINST_CREATE_load_1byte
-                             (drcontext,
-                              opnd_create_reg(sreg1),
-                              OPND_CREATE_MEM8(sreg1, 0)));
-    drtaint_insert_reg_to_taint(drcontext, ilist, where, reg2, sreg2);
-    instrlist_meta_preinsert(ilist, where, XINST_CREATE_load_1byte
-                             (drcontext,
-                              opnd_create_reg(sreg2),
-                              OPND_CREATE_MEM8(sreg2, 0)));
+    drtaint_insert_reg_to_taint_load(drcontext, ilist, where, reg1, sreg1);
+    drtaint_insert_reg_to_taint_load(drcontext, ilist, where, reg2, sreg2);
     instrlist_meta_preinsert(ilist, where, INSTR_CREATE_orr
                              (drcontext,
                               opnd_create_reg(sreg1),
