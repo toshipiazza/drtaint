@@ -1,8 +1,12 @@
 cmake_minimum_required (VERSION 3.0)
 project (drtaint)
 
-set(DynamoRIO_DIR         /home/piazzt/SD/Build/dynamorio/exports/cmake)
+IF(!DynamoRIO_DIR)
+  set(DynamoRIO_DIR         /home/piazzt/SD/Build/dynamorio/exports/cmake)
+ENDIF()
+IF(!DrMemoryFramework_DIR)
 set(DrMemoryFramework_DIR /home/piazzt/install/exports32/drmf)
+ENDIF()
 
 set(CMAKE_CXX_STANDARD 11)
 add_library(draslrharden SHARED
